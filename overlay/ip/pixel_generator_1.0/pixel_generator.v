@@ -197,8 +197,32 @@ reg [8:0] y;
 wire first = (x == 0) & (y==0);
 wire lastx = (x == X_SIZE - 1);
 wire lasty = (y == Y_SIZE - 1);
-wire [7:0] frame = regfile[0];
+
+reg [31:0] gp0_vid;
+reg [31:0] gp1_vid;
+reg [31:0] gp2_vid;
+reg [31:0] gp3_vid;
+reg [31:0] gp4_vid;
+
+wire [7:0] frame = gp0_vid[7:0];
 wire ready;
+
+always @(posedge out_stream_aclk) begin
+    if (!periph_resetn) begin
+        gp0_vid <= 32'd0;
+        gp1_vid <= 32'd0;
+        gp2_vid <= 32'd0;
+        gp3_vid <= 32'd0;
+        gp4_vid <= 32'd0;
+    end
+    else if (first) begin
+        gp0_vid <= regfile[0];
+        gp1_vid <= regfile[1];
+        gp2_vid <= regfile[2];
+        gp3_vid <= regfile[3];
+        gp4_vid <= regfile[4];
+    end
+end
 
 always @(posedge out_stream_aclk) begin
     if (periph_resetn) begin
@@ -220,10 +244,103 @@ end
 wire valid_int = 1'b1;
 
 wire [7:0] r, g, b;
-assign r = x[7:0] + frame;
-assign g = y[7:0] + frame;
-assign b = x[6:0]+y[6:0] + frame;
+// ============================================================
+// EchoVision V6 click-pulse sonar RGB generation
+//
+// gp0/regfile[0] = pulse radius
+// gp1/regfile[1] = source x[9:0], y[18:10]
+// gp2/regfile[2] = object x[9:0], y[18:10]
+// gp3/regfile[3] = reflectivity[7:0], radius[17:8]
+// gp4/regfile[4] = gain[7:0]
+//
+// Uses squared distance only.
+// No sqrt.
+// No division.
+// No trig / floating point / exponential.
+// ============================================================
 
+// ------------------------------------------------------------
+// Register decode with zero defaults
+// ------------------------------------------------------------
+wire source_default = (gp1_vid[18:0] == 19'd0);
+wire object_default = (gp2_vid[18:0] == 19'd0);
+wire obj_cfg_default = (gp3_vid[17:0] == 18'd0);
+
+wire [9:0] source_x = source_default ? 10'd320 : gp1_vid[9:0];
+wire [8:0] source_y = source_default ? 9'd240  : gp1_vid[18:10];
+
+wire [9:0] object_x = object_default ? 10'd420 : gp2_vid[9:0];
+wire [8:0] object_y = object_default ? 9'd240  : gp2_vid[18:10];
+
+wire [9:0] object_radius = obj_cfg_default ? 10'd35  : gp3_vid[17:8];
+wire [7:0] reflectivity  = obj_cfg_default ? 8'd220  : gp3_vid[7:0];
+wire [7:0] gain          = (gp4_vid == 32'd0) ? 8'd180 : gp4_vid[7:0];
+
+wire [10:0] pulse_radius = {1'b0, gp0_vid[9:0]};
+wire [10:0] pulse_inner  = (pulse_radius > 11'd6) ? (pulse_radius - 11'd6) : 11'd0;
+wire [10:0] pulse_outer  = pulse_radius + 11'd6;
+
+// ------------------------------------------------------------
+// Squared distances
+// ------------------------------------------------------------
+
+wire signed [11:0] dx_source  = $signed({2'b00, x})        - $signed({2'b00, source_x});
+wire signed [11:0] dy_source  = $signed({3'b000, y})       - $signed({3'b000, source_y});
+wire signed [11:0] dx_object  = $signed({2'b00, x})        - $signed({2'b00, object_x});
+wire signed [11:0] dy_object  = $signed({3'b000, y})       - $signed({3'b000, object_y});
+wire signed [11:0] dx_src_obj = $signed({2'b00, object_x}) - $signed({2'b00, source_x});
+wire signed [11:0] dy_src_obj = $signed({3'b000, object_y}) - $signed({3'b000, source_y});
+
+wire [23:0] source_d2 = (dx_source * dx_source) + (dy_source * dy_source);
+wire [23:0] object_d2 = (dx_object * dx_object) + (dy_object * dy_object);
+wire [23:0] src_obj_d2 = (dx_src_obj * dx_src_obj) + (dy_src_obj * dy_src_obj);
+
+wire [21:0] radius_d2 = object_radius * object_radius;
+wire [21:0] pulse_inner_d2 = pulse_inner * pulse_inner;
+wire [21:0] pulse_outer_d2 = pulse_outer * pulse_outer;
+
+// ------------------------------------------------------------
+// Pulse ring, object mask, and echo boost
+// ------------------------------------------------------------
+wire pulse_on = (source_d2 >= {2'b00, pulse_inner_d2}) &&
+                (source_d2 <= {2'b00, pulse_outer_d2});
+
+wire object_on = (object_d2 < {2'b00, radius_d2});
+
+wire object_pulse_hit = (src_obj_d2 >= {2'b00, pulse_inner_d2}) &&
+                        (src_obj_d2 <= {2'b00, pulse_outer_d2});
+
+wire [15:0] echo_boost_full = reflectivity * gain;
+wire [7:0] echo_boost = echo_boost_full[15:8];
+
+wire [8:0] object_r_hit = 9'd32 + {1'b0, echo_boost};
+wire [8:0] object_g_hit = 9'd72 + {1'b0, echo_boost};
+wire [8:0] object_b_hit = 9'd96 + {1'b0, echo_boost[7:1]};
+
+wire [7:0] object_r = (object_on && object_pulse_hit) ? (object_r_hit[8] ? 8'hff : object_r_hit[7:0]) : 8'h18;
+wire [7:0] object_g = (object_on && object_pulse_hit) ? (object_g_hit[8] ? 8'hff : object_g_hit[7:0]) : 8'h58;
+wire [7:0] object_b = (object_on && object_pulse_hit) ? (object_b_hit[8] ? 8'hff : object_b_hit[7:0]) : 8'h70;
+
+// Subtle fixed range rings from squared-distance bits.
+wire range_ring = (source_d2[11:7] == 5'd0);
+
+// ------------------------------------------------------------
+// RGB colour priority: object > pulse > range rings > background
+// ------------------------------------------------------------
+assign r = object_on  ? object_r :
+           pulse_on   ? 8'h28 :
+           range_ring ? 8'h00 :
+                        8'h00;
+
+assign g = object_on  ? object_g :
+           pulse_on   ? 8'hff :
+           range_ring ? 8'h48 :
+                        8'h08;
+
+assign b = object_on  ? object_b :
+           pulse_on   ? 8'hb0 :
+           range_ring ? 8'h38 :
+                        8'h14;
 packer pixel_packer(    .aclk(out_stream_aclk),
                         .aresetn(periph_resetn),
                         .r(r), .g(g), .b(b),
