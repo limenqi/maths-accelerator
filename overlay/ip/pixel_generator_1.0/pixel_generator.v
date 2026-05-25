@@ -350,6 +350,14 @@ function [7:0] absdiff8;
     end
 endfunction
 
+function [10:0] absdiff11;
+    input [10:0] a;
+    input [10:0] b;
+    begin
+        absdiff11 = (a > b) ? (a - b) : (b - a);
+    end
+endfunction
+
 
 localparam signed [11:0] SRC_X = 12'sd120;
 localparam signed [11:0] SRC_Y = 12'sd300;
@@ -375,7 +383,7 @@ localparam [23:0] RX_CORE_R2   = 24'd9;
 localparam [23:0] RX_RING_IN2  = 24'd49;   
 localparam [23:0] RX_RING_OUT2 = 24'd121;  
 
-localparam [7:0] HIT_DIST = 8'd142;
+localparam [9:0] HIT_DIST = 10'd142;
 
 (* rom_style = "block" *) reg [9:0] sqrt_rom_src [0:8191];
 (* rom_style = "block" *) reg [9:0] sqrt_rom_ref [0:8191];
@@ -390,18 +398,23 @@ wire signed [11:0] px = {2'b00, x};
 wire signed [11:0] py = {3'b000, y};
 
 
-reg [7:0] pulse_counter;
+reg [9:0] pulse_counter;
 
 always @(posedge out_stream_aclk) begin
     if (!periph_resetn) begin
-        pulse_counter <= 8'd0;
+        pulse_counter <= 10'd0;
     end
     else if (first && ready) begin
-        pulse_counter <= pulse_counter + 8'd1;
+        if (pulse_counter >= 10'd620) begin
+            pulse_counter <= 10'd0;
+        end
+        else begin
+            pulse_counter <= pulse_counter + 10'd2;
+        end
     end
 end
 
-wire [7:0] pulse_scaled = pulse_counter;
+wire [9:0] pulse_radius = pulse_counter;
 
 
 
@@ -453,16 +466,16 @@ wire lobe_mask = behind_object &&
                  (lobe_x < 12'd230) &&
                  (dy_o_sq_signed[23:0] <= lobe_half_r2);
 
-wire ref_active = (pulse_scaled > HIT_DIST);
-wire [7:0] ref_age = pulse_scaled - HIT_DIST;
+wire ref_active = (pulse_radius > HIT_DIST);
+wire [9:0] ref_age = ref_active ? (pulse_radius - HIT_DIST) : 10'd0;
 
 
 
 reg first_d1;
 reg lastx_d1;
 reg valid_d1;
-reg [7:0] pulse_scaled_d1;
-reg [7:0] ref_age_d1;
+reg [9:0] pulse_radius_d1;
+reg [9:0] ref_age_d1;
 reg [9:0] dist_s_true_d1;
 reg [9:0] dist_ref_true_d1;
 reg inside_object_d1;
@@ -478,8 +491,8 @@ always @(posedge out_stream_aclk) begin
         first_d1 <= 1'b0;
         lastx_d1 <= 1'b0;
         valid_d1 <= 1'b0;
-        pulse_scaled_d1 <= 8'd0;
-        ref_age_d1 <= 8'd0;
+        pulse_radius_d1 <= 10'd0;
+        ref_age_d1 <= 10'd0;
         dist_s_true_d1 <= 10'd0;
         dist_ref_true_d1 <= 10'd0;
         inside_object_d1 <= 1'b0;
@@ -494,7 +507,7 @@ always @(posedge out_stream_aclk) begin
         first_d1 <= first;
         lastx_d1 <= lastx;
         valid_d1 <= valid_int;
-        pulse_scaled_d1 <= pulse_scaled;
+        pulse_radius_d1 <= pulse_radius;
         ref_age_d1 <= ref_age;
         dist_s_true_d1 <= sqrt_rom_src[src_sqrt_addr];
         dist_ref_true_d1 <= sqrt_rom_ref[ref_sqrt_addr];
@@ -508,16 +521,21 @@ always @(posedge out_stream_aclk) begin
     end
 end
 
-wire [11:0] phase_s = {2'd0, dist_s_true_d1} - {4'd0, pulse_scaled_d1};
+wire [10:0] src_band_diff = absdiff11({1'b0, dist_s_true_d1}, {1'b0, pulse_radius_d1});
+wire src_shell_active = (src_band_diff < 11'd14);
+wire [11:0] phase_s = {2'd0, dist_s_true_d1} - {2'd0, pulse_radius_d1};
 wire signed [7:0] wave_s = wave_lut(phase_s[4:0]);
-wire signed [7:0] pressure_src = attenuate_wave(wave_s, {2'd0, dist_s_true_d1});
+wire signed [7:0] pressure_src_raw = attenuate_wave(wave_s, {2'd0, dist_s_true_d1});
+wire signed [7:0] pressure_src = src_shell_active ? pressure_src_raw : 8'sd0;
 
-wire [11:0] phase_ref = {2'd0, dist_ref_true_d1} - {4'd0, ref_age_d1};
+wire [10:0] ref_band_diff = absdiff11({1'b0, dist_ref_true_d1}, {1'b0, ref_age_d1});
+wire ref_shell_active = ref_active_d1 && lobe_mask_d1 && (ref_band_diff < 11'd18);
+wire [11:0] phase_ref = {2'd0, dist_ref_true_d1} - {2'd0, ref_age_d1};
 wire signed [7:0] wave_ref = wave_lut(phase_ref[4:0]);
 wire signed [7:0] pressure_ref_base = attenuate_wave(wave_ref, {2'd0, dist_ref_true_d1});
 wire signed [7:0] pressure_ref_weak = pressure_ref_base >>> 1;
 wire signed [7:0] pressure_ref =
-    (ref_active_d1 && lobe_mask_d1) ? pressure_ref_weak : 8'sd0;
+    ref_shell_active ? pressure_ref_weak : 8'sd0;
 
 wire signed [7:0] lobe_texture = 8'sd0;
 
@@ -528,16 +546,28 @@ wire signed [9:0] pressure_sum =
     {{2{pressure_ref[7]}}, pressure_ref} +
     {{2{lobe_texture[7]}}, lobe_texture};
 
+wire debug_sqrt_rings = gp4_vid[0];
+
 wire signed [8:0] pressure_total = clamp_pressure(pressure_sum);
 wire [23:0] field_rgb = pressure_to_rgb(pressure_total);
 
-wire [7:0] field_r = field_rgb[23:16];
-wire [7:0] field_g = field_rgb[15:8];
-wire [7:0] field_b = field_rgb[7:0];
+wire debug_ring  = (dist_s_true_d1[4:0] <= 5'd2);
+wire debug_outer = (dist_s_true_d1[5:0] <= 6'd4);
+
+wire [23:0] debug_rgb =
+    debug_ring  ? {8'd255, 8'd230, 8'd40} :
+    debug_outer ? {8'd0,   8'd80,  8'd180} :
+                  {8'd0,   8'd2,   8'd32};
+
+wire [23:0] display_rgb = debug_sqrt_rings ? debug_rgb : field_rgb;
+
+wire [7:0] field_r = display_rgb[23:16];
+wire [7:0] field_g = display_rgb[15:8];
+wire [7:0] field_b = display_rgb[7:0];
 
 
-wire [7:0] pulse_hit_diff = absdiff8(pulse_scaled_d1, HIT_DIST);
-wire pulse_hits_object = (pulse_hit_diff < 8'd7);
+wire [10:0] pulse_hit_diff = absdiff11({1'b0, pulse_radius_d1}, {1'b0, HIT_DIST});
+wire pulse_hits_object = (pulse_hit_diff < 11'd8);
 wire object_hit_highlight = object_rim_d1 && object_front_d1 && pulse_hits_object;
 
 wire [7:0] r, g, b;
