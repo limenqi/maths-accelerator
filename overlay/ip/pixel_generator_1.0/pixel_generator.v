@@ -244,33 +244,10 @@ end
 wire valid_int = 1'b1;
 
 // ================================================================
-// EchoVision V7 Visual Renderer
-// Visual-only sonar pressure-field style output.
+// EchoVision V7.1 Visual Renderer
+// Circular r2 pressure-field renderer.
 // Keep AXI-Lite, AXI-Stream, x/y counters, and packer unchanged.
 // ================================================================
-
-function [11:0] abs12;
-    input signed [11:0] value;
-    begin
-        abs12 = value[11] ? (~value[11:0] + 12'd1) : value[11:0];
-    end
-endfunction
-
-function [11:0] max12;
-    input [11:0] a;
-    input [11:0] b;
-    begin
-        max12 = (a > b) ? a : b;
-    end
-endfunction
-
-function [11:0] min12;
-    input [11:0] a;
-    input [11:0] b;
-    begin
-        min12 = (a < b) ? a : b;
-    end
-endfunction
 
 function [7:0] sat_add8;
     input [7:0] a;
@@ -282,6 +259,14 @@ function [7:0] sat_add8;
     end
 endfunction
 
+function [7:0] sat_sub8;
+    input [7:0] a;
+    input [7:0] b;
+    begin
+        sat_sub8 = (a > b) ? (a - b) : 8'd0;
+    end
+endfunction
+
 function [7:0] absdiff8;
     input [7:0] a;
     input [7:0] b;
@@ -290,8 +275,7 @@ function [7:0] absdiff8;
     end
 endfunction
 
-// ---------------- Hardcoded V7 scene ----------------
-// Start hardcoded first. Register-controlled positions can come later.
+// ---------------- Hardcoded V7.1 scene ----------------
 localparam signed [11:0] SRC_X = 12'sd120;
 localparam signed [11:0] SRC_Y = 12'sd300;
 
@@ -301,69 +285,59 @@ localparam signed [11:0] OBJ_Y = 12'sd300;
 localparam signed [11:0] RX_X  = 12'sd560;
 localparam signed [11:0] RX_Y  = 12'sd300;
 
-// Object radius = 38 px.
-// Use precomputed squares to save hardware.
 localparam [23:0] OBJ_R2_INNER = 24'd1296; // 36*36
 localparam [23:0] OBJ_R2       = 24'd1444; // 38*38
 localparam [23:0] OBJ_R2_OUTER = 24'd1600; // 40*40
 
-// Source-to-object front-surface distance:
-// object front x = 300 - 38 = 262
-// source x = 120
-// distance = 142
 localparam [7:0] HIT_DIST = 8'd142;
 
 // Current pixel as signed numbers.
 wire signed [11:0] px = {2'b00, x};
 wire signed [11:0] py = {3'b000, y};
 
-// gp0 controls animation/pulse.
-wire [7:0] pulse = regfile[0][7:0];
+// Local video-clock-domain animation pulse.
+reg [7:0] pulse_counter;
+
+always @(posedge out_stream_aclk) begin
+    if (!periph_resetn) begin
+        pulse_counter <= 8'd0;
+    end
+    else if (first && ready) begin
+        pulse_counter <= pulse_counter + 8'd1;
+    end
+end
+
+wire [7:0] pulse = pulse_counter;
 
 // ================================================================
-// 1. Source distance approximation
-// dist ~= max(abs(dx),abs(dy)) + min(abs(dx),abs(dy))/2
-// This avoids sqrt.
+// 1. Circular source pressure field using squared distance.
 // ================================================================
 
 wire signed [11:0] dx_s_signed = px - SRC_X;
 wire signed [11:0] dy_s_signed = py - SRC_Y;
 
-wire [11:0] abs_dx_s = abs12(dx_s_signed);
-wire [11:0] abs_dy_s = abs12(dy_s_signed);
+wire signed [23:0] dx_s_sq_signed = dx_s_signed * dx_s_signed;
+wire signed [23:0] dy_s_sq_signed = dy_s_signed * dy_s_signed;
+wire [23:0] r2_s = dx_s_sq_signed[23:0] + dy_s_sq_signed[23:0];
 
-wire [11:0] max_s = max12(abs_dx_s, abs_dy_s);
-wire [11:0] min_s = min12(abs_dx_s, abs_dy_s);
+wire [7:0] source_phase = r2_s[14:7] - pulse;
+wire [4:0] source_phase_fold =
+    source_phase[4] ? (5'd31 - source_phase[4:0]) : source_phase[4:0];
 
-wire [11:0] dist_s = max_s + (min_s >> 1);
-wire [11:0] dist_s_q2 = dist_s >> 2;
+wire [7:0] source_band_soft =
+    (source_phase_fold < 5'd2)  ? 8'd190 :
+    (source_phase_fold < 5'd4)  ? 8'd145 :
+    (source_phase_fold < 5'd7)  ? 8'd95  :
+    (source_phase_fold < 5'd11) ? 8'd42  :
+                                  8'd12;
 
-// ================================================================
-// 2. Background gradient + source glow
-// ================================================================
+wire [7:0] source_atten =
+    (r2_s[23:19] != 5'd0) ? 8'd180 : {2'b00, r2_s[18:13]};
 
-wire [8:0] y_inv = 9'd479 - y;
-wire [7:0] bg_vert = {3'b000, y_inv[8:4]};  // 0 to about 29
-
-wire [7:0] src_glow = (dist_s < 12'd280) ? (8'd70 - dist_s_q2[7:0]) : 8'd0;
-wire [7:0] bg_lum_0 = sat_add8(8'd22, bg_vert);
-wire [7:0] bg_lum   = sat_add8(bg_lum_0, src_glow);
-wire [7:0] bg_blue  = sat_add8(bg_lum, 8'd42);
-
-// ================================================================
-// 3. Moving outgoing source rings
-// ================================================================
-
-wire [11:0] phase_full = dist_s - {4'd0, pulse};
-wire [4:0] ring_phase = phase_full[4:0];
-
-wire ring_hit = (ring_phase <= 5'd2) || (ring_phase >= 5'd30);
-
-wire [7:0] ring_gain = (dist_s < 12'd620) ? (8'd180 - dist_s_q2[7:0]) : 8'd0;
-wire [7:0] ring_intensity = ring_hit ? ring_gain : 8'd0;
+wire [7:0] source_pressure = sat_sub8(source_band_soft, source_atten);
 
 // ================================================================
-// 4. Circular object
+// 2. Circular object and reflected lobe geometry.
 // ================================================================
 
 wire signed [11:0] dx_o_signed = px - OBJ_X;
@@ -371,151 +345,138 @@ wire signed [11:0] dy_o_signed = py - OBJ_Y;
 
 wire signed [23:0] dx_o_sq_signed = dx_o_signed * dx_o_signed;
 wire signed [23:0] dy_o_sq_signed = dy_o_signed * dy_o_signed;
+wire [23:0] obj_r2 = dx_o_sq_signed[23:0] + dy_o_sq_signed[23:0];
 
-wire [23:0] obj_d2 = dx_o_sq_signed[23:0] + dy_o_sq_signed[23:0];
+wire inside_object = (obj_r2 < OBJ_R2);
+wire near_edge = (obj_r2 >= OBJ_R2_INNER) && (obj_r2 <= OBJ_R2_OUTER);
 
-wire inside_object = (obj_d2 < OBJ_R2);
-wire near_edge = (obj_d2 >= OBJ_R2_INNER) && (obj_d2 <= OBJ_R2_OUTER);
+wire behind_object = (px > OBJ_X);
+wire [11:0] echo_x_from_obj = behind_object ? (px - OBJ_X) : 12'd0;
+wire [23:0] echo_y_limit_r2 =
+    ((echo_x_from_obj + 12'd28) * (echo_x_from_obj + 12'd28)) >> 2;
 
-// ================================================================
-// 5. Hit highlight on front surface
-// Source is on the left, so front side = left side of object.
-// ================================================================
-
-wire [7:0] pulse_hit_diff = absdiff8(pulse, HIT_DIST);
-wire pulse_hits_object = (pulse_hit_diff < 8'd12);
-wire front_side = (px < OBJ_X);
-
-wire object_hit_highlight = near_edge && front_side && pulse_hits_object;
-
-// ================================================================
-// 6. Fake reflected echo cloud behind object
-// This is visual-only, not a real acoustic solver.
-// ================================================================
+wire echo_lobe_mask = behind_object &&
+                      (echo_x_from_obj < 12'd210) &&
+                      (dy_o_sq_signed[23:0] < echo_y_limit_r2);
 
 wire echo_active = (pulse > HIT_DIST);
 wire [7:0] echo_age = pulse - HIT_DIST;
+wire [7:0] echo_phase = obj_r2[13:6] - echo_age;
+wire [4:0] echo_phase_fold =
+    echo_phase[4] ? (5'd31 - echo_phase[4:0]) : echo_phase[4:0];
 
-wire [11:0] abs_dx_o = abs12(dx_o_signed);
-wire [11:0] abs_dy_o = abs12(dy_o_signed);
-wire [11:0] max_o = max12(abs_dx_o, abs_dy_o);
-wire [11:0] min_o = min12(abs_dx_o, abs_dy_o);
-wire [11:0] dist_o = max_o + (min_o >> 1);
+wire [7:0] echo_band_soft =
+    (echo_phase_fold < 5'd3)  ? 8'd78 :
+    (echo_phase_fold < 5'd6)  ? 8'd54 :
+    (echo_phase_fold < 5'd10) ? 8'd30 :
+                                8'd10;
 
-wire [11:0] echo_x_from_obj = (px > OBJ_X) ? (px - OBJ_X) : 12'd0;
-wire [11:0] echo_y_from_obj = abs_dy_o;
+wire [7:0] echo_atten =
+    (echo_x_from_obj > 12'd180) ? 8'd70 : {2'b00, echo_x_from_obj[7:2]};
 
-// Cone/cloud region behind object.
-wire echo_zone = (px > OBJ_X) &&
-                 (px < (OBJ_X + 12'sd190)) &&
-                 (echo_y_from_obj < ((echo_x_from_obj >> 1) + 12'd10));
-
-// Broken/scattered echo ring.
-wire [7:0] echo_diff = absdiff8(dist_o[7:0], echo_age);
-wire echo_ring = (echo_diff < 8'd11);
-
-wire scatter = x[3] ^ y[4] ^ x[5] ^ y[2];
-
-wire [7:0] echo_intensity =
-    (echo_active && echo_zone && echo_ring && scatter) ? 8'd135 : 8'd0;
+wire scatter = x[4] ^ y[3] ^ x[6] ^ y[5];
+wire [7:0] echo_scatter = scatter ? 8'd10 : 8'd0;
+wire [7:0] echo_pressure_raw = sat_sub8(echo_band_soft, echo_atten);
+wire [7:0] echo_pressure =
+    (echo_active && echo_lobe_mask) ? sat_sub8(echo_pressure_raw, echo_scatter) : 8'd0;
 
 // ================================================================
-// 7. Combined pressure intensity
+// 3. Combined pressure intensity and navy background.
 // ================================================================
 
-wire [7:0] pressure_intensity = sat_add8(ring_intensity, echo_intensity);
+wire [8:0] y_inv = 9'd479 - y;
+wire [7:0] bg_blue = 8'd24 + {3'b000, y_inv[8:4]};
+wire [7:0] bg_green = 8'd6 + {5'b00000, y_inv[8:6]};
+
+wire [7:0] pressure_intensity = sat_add8(source_pressure, echo_pressure);
 
 // ================================================================
-// 8. Sonar colour palette
-// low: blue/cyan
-// mid: green/yellow
-// high: orange/red
+// 4. Pressure-field palette.
 // ================================================================
 
 wire [7:0] pal_r =
-    (pressure_intensity < 8'd40)  ? 8'd0 :
-    (pressure_intensity < 8'd90)  ? 8'd0 :
-    (pressure_intensity < 8'd150) ? (pressure_intensity + 8'd60) :
+    (pressure_intensity < 8'd28)  ? 8'd0 :
+    (pressure_intensity < 8'd72)  ? 8'd0 :
+    (pressure_intensity < 8'd116) ? 8'd18 :
+    (pressure_intensity < 8'd170) ? (pressure_intensity + 8'd50) :
                                     8'd255;
 
 wire [7:0] pal_g =
-    (pressure_intensity < 8'd40)  ? (8'd20 + pressure_intensity) :
-    (pressure_intensity < 8'd90)  ? (8'd80 + (pressure_intensity >> 1)) :
-    (pressure_intensity < 8'd150) ? 8'd220 :
-                                    (8'd220 - (pressure_intensity >> 2));
+    (pressure_intensity < 8'd28)  ? (8'd18 + (pressure_intensity >> 2)) :
+    (pressure_intensity < 8'd72)  ? (8'd70 + pressure_intensity) :
+    (pressure_intensity < 8'd116) ? 8'd210 :
+    (pressure_intensity < 8'd170) ? 8'd235 :
+                                    (8'd235 - (pressure_intensity >> 3));
 
 wire [7:0] pal_b =
-    (pressure_intensity < 8'd40)  ? (8'd100 + pressure_intensity) :
-    (pressure_intensity < 8'd90)  ? 8'd255 :
-    (pressure_intensity < 8'd150) ? 8'd90 :
-                                    8'd40;
+    (pressure_intensity < 8'd28)  ? (8'd80 + pressure_intensity) :
+    (pressure_intensity < 8'd72)  ? 8'd235 :
+    (pressure_intensity < 8'd116) ? 8'd160 :
+    (pressure_intensity < 8'd170) ? 8'd40 :
+                                    8'd18;
 
-wire [7:0] field_r = (pressure_intensity == 8'd0) ? 8'd0          : pal_r;
-wire [7:0] field_g = (pressure_intensity == 8'd0) ? (bg_lum >> 2) : pal_g;
-wire [7:0] field_b = (pressure_intensity == 8'd0) ? bg_blue       : pal_b;
-
-// ================================================================
-// 9. Source marker
-// ================================================================
-
-wire source_cross =
-    ((abs_dx_s < 12'd2) && (abs_dy_s < 12'd12)) ||
-    ((abs_dy_s < 12'd2) && (abs_dx_s < 12'd12));
-
-wire source_marker = (dist_s < 12'd6) || source_cross;
+wire [7:0] field_r = (pressure_intensity == 8'd0) ? 8'd0        : pal_r;
+wire [7:0] field_g = (pressure_intensity == 8'd0) ? bg_green    : pal_g;
+wire [7:0] field_b = (pressure_intensity == 8'd0) ? bg_blue     : pal_b;
 
 // ================================================================
-// 10. Receiver marker
-// Separate receiver on right side.
+// 5. Hit highlight, source marker, and receiver marker.
 // ================================================================
+
+wire [7:0] pulse_hit_diff = absdiff8(pulse, HIT_DIST);
+wire pulse_hits_object = (pulse_hit_diff < 8'd10);
+wire front_side = (px < OBJ_X);
+wire object_hit_highlight = near_edge && front_side && pulse_hits_object;
+
+wire source_marker = (r2_s < 24'd36) ||
+                     (((dx_s_signed > -12'sd2) && (dx_s_signed < 12'sd2) &&
+                       (dy_s_signed > -12'sd9) && (dy_s_signed < 12'sd9)) ||
+                      ((dy_s_signed > -12'sd2) && (dy_s_signed < 12'sd2) &&
+                       (dx_s_signed > -12'sd9) && (dx_s_signed < 12'sd9)));
 
 wire signed [11:0] dx_rx_signed = px - RX_X;
 wire signed [11:0] dy_rx_signed = py - RX_Y;
+wire signed [23:0] dx_rx_sq_signed = dx_rx_signed * dx_rx_signed;
+wire signed [23:0] dy_rx_sq_signed = dy_rx_signed * dy_rx_signed;
+wire [23:0] rx_r2 = dx_rx_sq_signed[23:0] + dy_rx_sq_signed[23:0];
 
-wire [11:0] abs_dx_rx = abs12(dx_rx_signed);
-wire [11:0] abs_dy_rx = abs12(dy_rx_signed);
-
-wire [11:0] max_rx = max12(abs_dx_rx, abs_dy_rx);
-wire [11:0] min_rx = min12(abs_dx_rx, abs_dy_rx);
-wire [11:0] dist_rx = max_rx + (min_rx >> 1);
-
-wire receiver_ring = (dist_rx > 12'd8) && (dist_rx < 12'd14);
-
+wire receiver_ring = (rx_r2 > 24'd64) && (rx_r2 < 24'd169);
 wire receiver_cross =
-    ((abs_dx_rx < 12'd2) && (abs_dy_rx < 12'd9)) ||
-    ((abs_dy_rx < 12'd2) && (abs_dx_rx < 12'd9));
+    (((dx_rx_signed > -12'sd2) && (dx_rx_signed < 12'sd2) &&
+      (dy_rx_signed > -12'sd8) && (dy_rx_signed < 12'sd8)) ||
+     ((dy_rx_signed > -12'sd2) && (dy_rx_signed < 12'sd2) &&
+      (dx_rx_signed > -12'sd8) && (dx_rx_signed < 12'sd8)));
 
 wire receiver_marker = receiver_ring || receiver_cross;
 
 // ================================================================
-// 11. Final layer priority
-// Later visual layers override earlier field colour.
+// 6. Final layer priority.
 // ================================================================
 
 wire [7:0] r, g, b;
 
 assign r =
+    receiver_marker        ? 8'd30  :
     source_marker          ? 8'd255 :
-    receiver_marker        ? 8'd40  :
     object_hit_highlight   ? 8'd255 :
-    near_edge              ? 8'd165 :
-    inside_object          ? 8'd75  :
+    near_edge              ? 8'd140 :
+    inside_object          ? 8'd54  :
                              field_r;
 
 assign g =
-    source_marker          ? 8'd220 :
-    receiver_marker        ? 8'd255 :
-    object_hit_highlight   ? 8'd235 :
-    near_edge              ? 8'd165 :
-    inside_object          ? 8'd75  :
+    receiver_marker        ? 8'd225 :
+    source_marker          ? 8'd230 :
+    object_hit_highlight   ? 8'd245 :
+    near_edge              ? 8'd145 :
+    inside_object          ? 8'd54  :
                              field_g;
 
 assign b =
+    receiver_marker        ? 8'd95  :
     source_marker          ? 8'd45  :
-    receiver_marker        ? 8'd80  :
-    object_hit_highlight   ? 8'd80  :
-    near_edge              ? 8'd155 :
-    inside_object          ? 8'd75  :
+    object_hit_highlight   ? 8'd120 :
+    near_edge              ? 8'd150 :
+    inside_object          ? 8'd58  :
                              field_b;
 packer pixel_packer(    .aclk(out_stream_aclk),
                         .aresetn(periph_resetn),
