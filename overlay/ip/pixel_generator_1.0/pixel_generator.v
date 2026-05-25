@@ -1,24 +1,4 @@
 
-//////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 16.05.2024 22:03:08
-// Design Name: 
-// Module Name: test_block_v
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
-//////////////////////////////////////////////////////////////////////////////////
-
 
 module pixel_generator(
 input           out_stream_aclk,
@@ -228,7 +208,7 @@ always @(posedge out_stream_aclk) begin
     if (periph_resetn) begin
         if (ready & valid_int) begin
             if (lastx) begin
-                x <= 9'd0;
+                x <= 10'd0;
                 if (lasty) y <= 9'd0;
                 else y <= y + 9'd1;
             end
@@ -243,27 +223,122 @@ end
 
 wire valid_int = 1'b1;
 
-// ================================================================
-// EchoVision V7.1 Visual Renderer
-// Circular r2 pressure-field renderer.
-// Keep AXI-Lite, AXI-Stream, x/y counters, and packer unchanged.
-// ================================================================
 
-function [7:0] sat_add8;
-    input [7:0] a;
-    input [7:0] b;
-    reg [8:0] sum;
+
+function [11:0] abs12;
+    input signed [11:0] value;
     begin
-        sum = {1'b0, a} + {1'b0, b};
-        sat_add8 = sum[8] ? 8'hFF : sum[7:0];
+        abs12 = value[11] ? (~value[11:0] + 12'd1) : value[11:0];
     end
 endfunction
 
-function [7:0] sat_sub8;
-    input [7:0] a;
-    input [7:0] b;
+function signed [7:0] wave_lut;
+    input [4:0] phase;
     begin
-        sat_sub8 = (a > b) ? (a - b) : 8'd0;
+        case (phase)
+            5'd0:  wave_lut = 8'sd0;
+            5'd1:  wave_lut = 8'sd18;
+            5'd2:  wave_lut = 8'sd36;
+            5'd3:  wave_lut = 8'sd55;
+            5'd4:  wave_lut = 8'sd72;
+            5'd5:  wave_lut = 8'sd86;
+            5'd6:  wave_lut = 8'sd96;
+            5'd7:  wave_lut = 8'sd86;
+            5'd8:  wave_lut = 8'sd72;
+            5'd9:  wave_lut = 8'sd55;
+            5'd10: wave_lut = 8'sd36;
+            5'd11: wave_lut = 8'sd18;
+            5'd12: wave_lut = 8'sd0;
+            5'd13: wave_lut = -8'sd12;
+            5'd14: wave_lut = -8'sd24;
+            5'd15: wave_lut = -8'sd36;
+            5'd16: wave_lut = -8'sd48;
+            5'd17: wave_lut = -8'sd56;
+            5'd18: wave_lut = -8'sd64;
+            5'd19: wave_lut = -8'sd56;
+            5'd20: wave_lut = -8'sd48;
+            5'd21: wave_lut = -8'sd36;
+            5'd22: wave_lut = -8'sd24;
+            5'd23: wave_lut = -8'sd12;
+            5'd24: wave_lut = 8'sd0;
+            5'd25: wave_lut = 8'sd10;
+            5'd26: wave_lut = 8'sd20;
+            5'd27: wave_lut = 8'sd28;
+            5'd28: wave_lut = 8'sd20;
+            5'd29: wave_lut = 8'sd10;
+            5'd30: wave_lut = 8'sd0;
+            default: wave_lut = -8'sd8;
+        endcase
+    end
+endfunction
+
+function signed [7:0] attenuate_wave;
+    input signed [7:0] wave;
+    input [11:0] dist;
+    begin
+        if (dist < 12'd80) begin
+            attenuate_wave = wave;
+        end
+        else if (dist < 12'd160) begin
+            attenuate_wave = wave >>> 1;
+        end
+        else if (dist < 12'd260) begin
+            attenuate_wave = wave >>> 2;
+        end
+        else begin
+            attenuate_wave = wave >>> 3;
+        end
+    end
+endfunction
+
+function signed [8:0] clamp_pressure;
+    input signed [9:0] value;
+    begin
+        if (value > 10'sd127) begin
+            clamp_pressure = 9'sd127;
+        end
+        else if (value < -10'sd96) begin
+            clamp_pressure = -9'sd96;
+        end
+        else begin
+            clamp_pressure = value[8:0];
+        end
+    end
+endfunction
+
+function [23:0] pressure_to_rgb;
+    input signed [8:0] pressure;
+    begin
+        if (pressure < -9'sd64) begin
+            pressure_to_rgb = {8'd0, 8'd0, 8'd92};
+        end
+        else if (pressure < -9'sd32) begin
+            pressure_to_rgb = {8'd0, 8'd8, 8'd125};
+        end
+        else if (pressure < -9'sd12) begin
+            pressure_to_rgb = {8'd0, 8'd18, 8'd150};
+        end
+        else if (pressure < 9'sd8) begin
+            pressure_to_rgb = {8'd0, 8'd2, 8'd32};
+        end
+        else if (pressure < 9'sd26) begin
+            pressure_to_rgb = {8'd0, 8'd18, 8'd88};
+        end
+        else if (pressure < 9'sd46) begin
+            pressure_to_rgb = {8'd0, 8'd78, 8'd170};
+        end
+        else if (pressure < 9'sd66) begin
+            pressure_to_rgb = {8'd0, 8'd170, 8'd210};
+        end
+        else if (pressure < 9'sd88) begin
+            pressure_to_rgb = {8'd45, 8'd190, 8'd210};
+        end
+        else if (pressure < 9'sd110) begin
+            pressure_to_rgb = {8'd230, 8'd190, 8'd45};
+        end
+        else begin
+            pressure_to_rgb = {8'd255, 8'd90, 8'd16};
+        end
     end
 endfunction
 
@@ -275,7 +350,7 @@ function [7:0] absdiff8;
     end
 endfunction
 
-// ---------------- Hardcoded V7.1 scene ----------------
+
 localparam signed [11:0] SRC_X = 12'sd120;
 localparam signed [11:0] SRC_Y = 12'sd300;
 
@@ -285,17 +360,36 @@ localparam signed [11:0] OBJ_Y = 12'sd300;
 localparam signed [11:0] RX_X  = 12'sd560;
 localparam signed [11:0] RX_Y  = 12'sd300;
 
-localparam [23:0] OBJ_R2_INNER = 24'd1296; // 36*36
-localparam [23:0] OBJ_R2       = 24'd1444; // 38*38
-localparam [23:0] OBJ_R2_OUTER = 24'd1600; // 40*40
+localparam signed [11:0] REF_X = 12'sd319;
+localparam signed [11:0] REF_Y = 12'sd300;
+
+localparam [23:0] OBJ_R2_INNER = 24'd1296; 
+localparam [23:0] OBJ_R2       = 24'd1444; 
+localparam [23:0] OBJ_R2_OUTER = 24'd1600; 
+
+localparam [23:0] SRC_CORE_R2  = 24'd16;   
+localparam [23:0] SRC_RING_IN2 = 24'd25;   
+localparam [23:0] SRC_RING_OUT2 = 24'd64;  
+
+localparam [23:0] RX_CORE_R2   = 24'd9;   
+localparam [23:0] RX_RING_IN2  = 24'd49;   
+localparam [23:0] RX_RING_OUT2 = 24'd121;  
 
 localparam [7:0] HIT_DIST = 8'd142;
 
-// Current pixel as signed numbers.
+(* rom_style = "block" *) reg [9:0] sqrt_rom_src [0:8191];
+(* rom_style = "block" *) reg [9:0] sqrt_rom_ref [0:8191];
+
+initial begin
+    $readmemh("sqrt_lut.mem", sqrt_rom_src);
+    $readmemh("sqrt_lut.mem", sqrt_rom_ref);
+end
+
+
 wire signed [11:0] px = {2'b00, x};
 wire signed [11:0] py = {3'b000, y};
 
-// Local video-clock-domain animation pulse.
+
 reg [7:0] pulse_counter;
 
 always @(posedge out_stream_aclk) begin
@@ -307,181 +401,174 @@ always @(posedge out_stream_aclk) begin
     end
 end
 
-wire [7:0] pulse = pulse_counter;
+wire [7:0] pulse_scaled = pulse_counter;
 
-// ================================================================
-// 1. Circular source pressure field using squared distance.
-// ================================================================
+
 
 wire signed [11:0] dx_s_signed = px - SRC_X;
 wire signed [11:0] dy_s_signed = py - SRC_Y;
-
 wire signed [23:0] dx_s_sq_signed = dx_s_signed * dx_s_signed;
 wire signed [23:0] dy_s_sq_signed = dy_s_signed * dy_s_signed;
-wire [23:0] r2_s = dx_s_sq_signed[23:0] + dy_s_sq_signed[23:0];
+wire [23:0] src_r2 = dx_s_sq_signed[23:0] + dy_s_sq_signed[23:0];
+wire [12:0] src_sqrt_addr = src_r2[18:6];
 
-wire [7:0] source_phase = r2_s[14:7] - pulse;
-wire [4:0] source_phase_fold =
-    source_phase[4] ? (5'd31 - source_phase[4:0]) : source_phase[4:0];
 
-wire [7:0] source_band_soft =
-    (source_phase_fold < 5'd2)  ? 8'd190 :
-    (source_phase_fold < 5'd4)  ? 8'd145 :
-    (source_phase_fold < 5'd7)  ? 8'd95  :
-    (source_phase_fold < 5'd11) ? 8'd42  :
-                                  8'd12;
-
-wire [7:0] source_atten =
-    (r2_s[23:19] != 5'd0) ? 8'd180 : {2'b00, r2_s[18:13]};
-
-wire [7:0] source_pressure = sat_sub8(source_band_soft, source_atten);
-
-// ================================================================
-// 2. Circular object and reflected lobe geometry.
-// ================================================================
 
 wire signed [11:0] dx_o_signed = px - OBJ_X;
 wire signed [11:0] dy_o_signed = py - OBJ_Y;
-
 wire signed [23:0] dx_o_sq_signed = dx_o_signed * dx_o_signed;
 wire signed [23:0] dy_o_sq_signed = dy_o_signed * dy_o_signed;
 wire [23:0] obj_r2 = dx_o_sq_signed[23:0] + dy_o_sq_signed[23:0];
 
-wire inside_object = (obj_r2 < OBJ_R2);
-wire near_edge = (obj_r2 >= OBJ_R2_INNER) && (obj_r2 <= OBJ_R2_OUTER);
+wire inside_object = (obj_r2 <= OBJ_R2);
+wire object_rim = (obj_r2 >= OBJ_R2_INNER) && (obj_r2 <= OBJ_R2_OUTER);
 
-wire behind_object = (px > OBJ_X);
-wire [11:0] echo_x_from_obj = behind_object ? (px - OBJ_X) : 12'd0;
-wire [23:0] echo_y_limit_r2 =
-    ((echo_x_from_obj + 12'd28) * (echo_x_from_obj + 12'd28)) >> 2;
-
-wire echo_lobe_mask = behind_object &&
-                      (echo_x_from_obj < 12'd210) &&
-                      (dy_o_sq_signed[23:0] < echo_y_limit_r2);
-
-wire echo_active = (pulse > HIT_DIST);
-wire [7:0] echo_age = pulse - HIT_DIST;
-wire [7:0] echo_phase = obj_r2[13:6] - echo_age;
-wire [4:0] echo_phase_fold =
-    echo_phase[4] ? (5'd31 - echo_phase[4:0]) : echo_phase[4:0];
-
-wire [7:0] echo_band_soft =
-    (echo_phase_fold < 5'd3)  ? 8'd78 :
-    (echo_phase_fold < 5'd6)  ? 8'd54 :
-    (echo_phase_fold < 5'd10) ? 8'd30 :
-                                8'd10;
-
-wire [7:0] echo_atten =
-    (echo_x_from_obj > 12'd180) ? 8'd70 : {2'b00, echo_x_from_obj[7:2]};
-
-wire scatter = x[4] ^ y[3] ^ x[6] ^ y[5];
-wire [7:0] echo_scatter = scatter ? 8'd10 : 8'd0;
-wire [7:0] echo_pressure_raw = sat_sub8(echo_band_soft, echo_atten);
-wire [7:0] echo_pressure =
-    (echo_active && echo_lobe_mask) ? sat_sub8(echo_pressure_raw, echo_scatter) : 8'd0;
-
-// ================================================================
-// 3. Combined pressure intensity and navy background.
-// ================================================================
-
-wire [8:0] y_inv = 9'd479 - y;
-wire [7:0] bg_blue = 8'd24 + {3'b000, y_inv[8:4]};
-wire [7:0] bg_green = 8'd6 + {5'b00000, y_inv[8:6]};
-
-wire [7:0] pressure_intensity = sat_add8(source_pressure, echo_pressure);
-
-// ================================================================
-// 4. Pressure-field palette.
-// ================================================================
-
-wire [7:0] pal_r =
-    (pressure_intensity < 8'd28)  ? 8'd0 :
-    (pressure_intensity < 8'd72)  ? 8'd0 :
-    (pressure_intensity < 8'd116) ? 8'd18 :
-    (pressure_intensity < 8'd170) ? (pressure_intensity + 8'd50) :
-                                    8'd255;
-
-wire [7:0] pal_g =
-    (pressure_intensity < 8'd28)  ? (8'd18 + (pressure_intensity >> 2)) :
-    (pressure_intensity < 8'd72)  ? (8'd70 + pressure_intensity) :
-    (pressure_intensity < 8'd116) ? 8'd210 :
-    (pressure_intensity < 8'd170) ? 8'd235 :
-                                    (8'd235 - (pressure_intensity >> 3));
-
-wire [7:0] pal_b =
-    (pressure_intensity < 8'd28)  ? (8'd80 + pressure_intensity) :
-    (pressure_intensity < 8'd72)  ? 8'd235 :
-    (pressure_intensity < 8'd116) ? 8'd160 :
-    (pressure_intensity < 8'd170) ? 8'd40 :
-                                    8'd18;
-
-wire [7:0] field_r = (pressure_intensity == 8'd0) ? 8'd0        : pal_r;
-wire [7:0] field_g = (pressure_intensity == 8'd0) ? bg_green    : pal_g;
-wire [7:0] field_b = (pressure_intensity == 8'd0) ? bg_blue     : pal_b;
-
-// ================================================================
-// 5. Hit highlight, source marker, and receiver marker.
-// ================================================================
-
-wire [7:0] pulse_hit_diff = absdiff8(pulse, HIT_DIST);
-wire pulse_hits_object = (pulse_hit_diff < 8'd10);
-wire front_side = (px < OBJ_X);
-wire object_hit_highlight = near_edge && front_side && pulse_hits_object;
-
-wire source_marker = (r2_s < 24'd36) ||
-                     (((dx_s_signed > -12'sd2) && (dx_s_signed < 12'sd2) &&
-                       (dy_s_signed > -12'sd9) && (dy_s_signed < 12'sd9)) ||
-                      ((dy_s_signed > -12'sd2) && (dy_s_signed < 12'sd2) &&
-                       (dx_s_signed > -12'sd9) && (dx_s_signed < 12'sd9)));
+wire source_core = (src_r2 <= SRC_CORE_R2);
+wire source_ring = (src_r2 >= SRC_RING_IN2) && (src_r2 <= SRC_RING_OUT2);
+wire source_marker = source_core || source_ring;
 
 wire signed [11:0] dx_rx_signed = px - RX_X;
 wire signed [11:0] dy_rx_signed = py - RX_Y;
 wire signed [23:0] dx_rx_sq_signed = dx_rx_signed * dx_rx_signed;
 wire signed [23:0] dy_rx_sq_signed = dy_rx_signed * dy_rx_signed;
 wire [23:0] rx_r2 = dx_rx_sq_signed[23:0] + dy_rx_sq_signed[23:0];
+wire receiver_core = (rx_r2 <= RX_CORE_R2);
+wire receiver_ring = (rx_r2 >= RX_RING_IN2) && (rx_r2 <= RX_RING_OUT2);
+wire receiver_marker = receiver_core || receiver_ring;
 
-wire receiver_ring = (rx_r2 > 24'd64) && (rx_r2 < 24'd169);
-wire receiver_cross =
-    (((dx_rx_signed > -12'sd2) && (dx_rx_signed < 12'sd2) &&
-      (dy_rx_signed > -12'sd8) && (dy_rx_signed < 12'sd8)) ||
-     ((dy_rx_signed > -12'sd2) && (dy_rx_signed < 12'sd2) &&
-      (dx_rx_signed > -12'sd8) && (dx_rx_signed < 12'sd8)));
 
-wire receiver_marker = receiver_ring || receiver_cross;
 
-// ================================================================
-// 6. Final layer priority.
-// ================================================================
+wire signed [11:0] dx_ref_signed = px - REF_X;
+wire signed [11:0] dy_ref_signed = py - REF_Y;
+wire signed [23:0] dx_ref_sq_signed = dx_ref_signed * dx_ref_signed;
+wire signed [23:0] dy_ref_sq_signed = dy_ref_signed * dy_ref_signed;
+wire [23:0] ref_r2 = dx_ref_sq_signed[23:0] + dy_ref_sq_signed[23:0];
+wire [12:0] ref_sqrt_addr = ref_r2[18:6];
+
+wire behind_object = (px > OBJ_X);
+wire [11:0] lobe_x = behind_object ? (px - OBJ_X) : 12'd0;
+wire [11:0] lobe_half = (lobe_x >> 1) + 12'd20;
+wire [23:0] lobe_half_r2 = lobe_half * lobe_half;
+wire lobe_mask = behind_object &&
+                 (lobe_x < 12'd230) &&
+                 (dy_o_sq_signed[23:0] <= lobe_half_r2);
+
+wire ref_active = (pulse_scaled > HIT_DIST);
+wire [7:0] ref_age = pulse_scaled - HIT_DIST;
+
+
+
+reg first_d1;
+reg lastx_d1;
+reg valid_d1;
+reg [7:0] pulse_scaled_d1;
+reg [7:0] ref_age_d1;
+reg [9:0] dist_s_true_d1;
+reg [9:0] dist_ref_true_d1;
+reg inside_object_d1;
+reg object_rim_d1;
+reg source_marker_d1;
+reg receiver_marker_d1;
+reg object_front_d1;
+reg lobe_mask_d1;
+reg ref_active_d1;
+
+always @(posedge out_stream_aclk) begin
+    if (!periph_resetn) begin
+        first_d1 <= 1'b0;
+        lastx_d1 <= 1'b0;
+        valid_d1 <= 1'b0;
+        pulse_scaled_d1 <= 8'd0;
+        ref_age_d1 <= 8'd0;
+        dist_s_true_d1 <= 10'd0;
+        dist_ref_true_d1 <= 10'd0;
+        inside_object_d1 <= 1'b0;
+        object_rim_d1 <= 1'b0;
+        source_marker_d1 <= 1'b0;
+        receiver_marker_d1 <= 1'b0;
+        object_front_d1 <= 1'b0;
+        lobe_mask_d1 <= 1'b0;
+        ref_active_d1 <= 1'b0;
+    end
+    else if (ready & valid_int) begin
+        first_d1 <= first;
+        lastx_d1 <= lastx;
+        valid_d1 <= valid_int;
+        pulse_scaled_d1 <= pulse_scaled;
+        ref_age_d1 <= ref_age;
+        dist_s_true_d1 <= sqrt_rom_src[src_sqrt_addr];
+        dist_ref_true_d1 <= sqrt_rom_ref[ref_sqrt_addr];
+        inside_object_d1 <= inside_object;
+        object_rim_d1 <= object_rim;
+        source_marker_d1 <= source_marker;
+        receiver_marker_d1 <= receiver_marker;
+        object_front_d1 <= (px < OBJ_X);
+        lobe_mask_d1 <= lobe_mask;
+        ref_active_d1 <= ref_active;
+    end
+end
+
+wire [11:0] phase_s = {2'd0, dist_s_true_d1} - {4'd0, pulse_scaled_d1};
+wire signed [7:0] wave_s = wave_lut(phase_s[4:0]);
+wire signed [7:0] pressure_src = attenuate_wave(wave_s, {2'd0, dist_s_true_d1});
+
+wire [11:0] phase_ref = {2'd0, dist_ref_true_d1} - {4'd0, ref_age_d1};
+wire signed [7:0] wave_ref = wave_lut(phase_ref[4:0]);
+wire signed [7:0] pressure_ref_base = attenuate_wave(wave_ref, {2'd0, dist_ref_true_d1});
+wire signed [7:0] pressure_ref_weak = pressure_ref_base >>> 1;
+wire signed [7:0] pressure_ref =
+    (ref_active_d1 && lobe_mask_d1) ? pressure_ref_weak : 8'sd0;
+
+wire signed [7:0] lobe_texture = 8'sd0;
+
+
+
+wire signed [9:0] pressure_sum =
+    {{2{pressure_src[7]}}, pressure_src} +
+    {{2{pressure_ref[7]}}, pressure_ref} +
+    {{2{lobe_texture[7]}}, lobe_texture};
+
+wire signed [8:0] pressure_total = clamp_pressure(pressure_sum);
+wire [23:0] field_rgb = pressure_to_rgb(pressure_total);
+
+wire [7:0] field_r = field_rgb[23:16];
+wire [7:0] field_g = field_rgb[15:8];
+wire [7:0] field_b = field_rgb[7:0];
+
+
+wire [7:0] pulse_hit_diff = absdiff8(pulse_scaled_d1, HIT_DIST);
+wire pulse_hits_object = (pulse_hit_diff < 8'd7);
+wire object_hit_highlight = object_rim_d1 && object_front_d1 && pulse_hits_object;
 
 wire [7:0] r, g, b;
 
 assign r =
-    receiver_marker        ? 8'd30  :
-    source_marker          ? 8'd255 :
+    receiver_marker_d1     ? 8'd25  :
+    source_marker_d1       ? 8'd255 :
     object_hit_highlight   ? 8'd255 :
-    near_edge              ? 8'd140 :
-    inside_object          ? 8'd54  :
+    object_rim_d1          ? 8'd145 :
+    inside_object_d1       ? 8'd54  :
                              field_r;
 
 assign g =
-    receiver_marker        ? 8'd225 :
-    source_marker          ? 8'd230 :
+    receiver_marker_d1     ? 8'd225 :
+    source_marker_d1       ? 8'd232 :
     object_hit_highlight   ? 8'd245 :
-    near_edge              ? 8'd145 :
-    inside_object          ? 8'd54  :
+    object_rim_d1          ? 8'd145 :
+    inside_object_d1       ? 8'd54  :
                              field_g;
 
 assign b =
-    receiver_marker        ? 8'd95  :
-    source_marker          ? 8'd45  :
-    object_hit_highlight   ? 8'd120 :
-    near_edge              ? 8'd150 :
-    inside_object          ? 8'd58  :
+    receiver_marker_d1     ? 8'd80  :
+    source_marker_d1       ? 8'd45  :
+    object_hit_highlight   ? 8'd130 :
+    object_rim_d1          ? 8'd150 :
+    inside_object_d1       ? 8'd58  :
                              field_b;
 packer pixel_packer(    .aclk(out_stream_aclk),
                         .aresetn(periph_resetn),
-                        .r(r), .g(g), .b(b),
-                        .eol(lastx), .in_stream_ready(ready), .valid(valid_int), .sof(first),
+                        .r(r), .g(b), .b(g),
+                        .eol(lastx_d1), .in_stream_ready(ready), .valid(valid_d1), .sof(first_d1),
                         .out_stream_tdata(out_stream_tdata), .out_stream_tkeep(out_stream_tkeep),
                         .out_stream_tlast(out_stream_tlast), .out_stream_tready(out_stream_tready),
                         .out_stream_tvalid(out_stream_tvalid), .out_stream_tuser(out_stream_tuser) );
