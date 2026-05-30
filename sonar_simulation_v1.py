@@ -117,10 +117,10 @@ for panel in [wave_simulation_panel, graph_panel, info_panel]:
         spine.set_edgecolor('#223355')  # set border color to darker blue
 
 # wave field image 
-wave_simulation_panel.set_title('LClick=source  RClick=object  MClick=receiver  Space=fire [/]=radius  S=shape  O=object  C=color', color='#aabbcc', fontsize=8.5)
+wave_simulation_panel.set_title('LClick=source  RClick=object  MClick=receiver  Space=fire [/]=radius  S=shape  C=colormap  P=pause  R=reset', color='#aabbcc', fontsize=8.5)
 wave_simulation_panel.axis('off')
 
-wave_image = wave_simulation_panel.imshow(current_wave, cmap='RdBu_r', vmin=-0.5, vmax=0.5, interpolation='bilinear', aspect='auto', extent=[0, WIDTH, HEIGHT, 0])
+wave_image = wave_simulation_panel.imshow(current_wave, cmap='RdBu_r', vmin=-0.5, vmax=0.5, interpolation='bilinear', aspect='equal', extent=[0, WIDTH, HEIGHT, 0])
 
 # markers 
 source_point, = wave_simulation_panel.plot(source_position[0], source_position[1], '*', color='#ffe050', ms=14, label='Source', zorder=6)
