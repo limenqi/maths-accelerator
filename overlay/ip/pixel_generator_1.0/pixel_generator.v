@@ -194,11 +194,22 @@ assign s_axi_lite_bresp = (writeAddr < REG_FILE_SIZE) ? AXI_OK : AXI_ERR;
 reg [9:0] x;
 reg [8:0] y;
 
+wire [8:0] x_val;
+wire [7:0] y_val;
+
+assign x_val = x[9:1];
+assign y_val = y[8:1];
+
+//note here we keep output resolution at 640x480 but we simulate a 320x240 grid of pixels, so each pixel simulated takes up 2x2 block of output. 
+//decided to keep this in case other parts of the FPGA is built according to 640x480, don't want to break that.
 wire first = (x == 0) & (y==0);
 wire lastx = (x == X_SIZE - 1);
 wire lasty = (y == Y_SIZE - 1);
 wire [7:0] frame = regfile[0];
 wire ready;
+reg swap_memory;
+
+
 
 always @(posedge out_stream_aclk) begin
     if (periph_resetn) begin
@@ -220,9 +231,56 @@ end
 wire valid_int = 1'b1;
 
 wire [7:0] r, g, b;
-assign r = x[7:0] + frame;
-assign g = y[7:0] + frame;
-assign b = x[6:0]+y[6:0] + frame;
+// assign r = x[7:0] + frame;
+// assign g = y[7:0] + frame;
+// assign b = x[6:0]+y[6:0] + frame;
+
+reg signed [8:0] p_prev [0:319][0:239];
+reg signed [8:0] p_cur [0:319][0:239];
+
+wire signed [8:0] next_pixel_middle;
+wire signed [8:0] cur_pixel_middle;
+wire signed [8:0] cur_pixel_top;
+wire signed [8:0] cur_pixel_bottom;
+wire signed [8:0] cur_pixel_left;
+wire signed [8:0] cur_pixel_right;
+wire signed [8:0] prev_pixel_middle;
+
+// using swap memory as a flag to determine which memory to read from and write to. 
+// to save space on reg file, only use 2 arrays to store pixel values and we swap their roles every frame.
+
+assign cur_pixel_middle  = swap_memory ? p_prev[x_val][y_val] : p_cur[x_val][y_val];
+assign prev_pixel_middle = swap_memory ? p_cur[x_val][y_val]  : p_prev[x_val][y_val];
+
+assign cur_pixel_top     = swap_memory ? p_prev[x_val][y_val-1] : p_cur[x_val][y_val-1];
+assign cur_pixel_bottom  = swap_memory ? p_prev[x_val][y_val+1] : p_cur[x_val][y_val+1];
+assign cur_pixel_left    = swap_memory ? p_prev[x_val-1][y_val] : p_cur[x_val-1][y_val];
+assign cur_pixel_right   = swap_memory ? p_prev[x_val+1][y_val] : p_cur[x_val+1][y_val]; 
+
+// boundary conditions still not handled currently
+
+object_laplacian laplacian(  .pixel_top(cur_pixel_top), .pixel_bottom(cur_pixel_bottom), .pixel_left(cur_pixel_left), .pixel_right(cur_pixel_right),
+                        .pixel_middle(cur_pixel_middle), .pixel_middle_previous(prev_pixel_middle),
+                        .reflection_to_wall(0), .transmission_to_wall(0), .reflection_to_air(0), .transmission_to_air(0),
+                        .wave_speed_squared(0), .wall_case(0),
+                        .next_pixel_middle(next_pixel_middle) );
+
+always @(posedge out_stream_aclk) begin 
+    if(!periph_resetn)
+        swap_memory <= 1'b0;
+    else if (x_val==319 && y_val==239)
+        swap_memory <= ~swap_memory;
+    if(!swap_memory)
+        p_prev[x_val][y_val] <= next_pixel_middle;
+    else
+        p_cur[x_val][y_val] <= next_pixel_middle;
+end
+wire [8:0] mag;
+assign mag = (cur_pixel_middle > 0) ? cur_pixel_middle : -cur_pixel_middle;
+// magnitude is aboslute value of pressure, how positive pressure is determines red value and how negative pressure is determines blue value, green is not used.
+assign r = (cur_pixel_middle > 0) ? mag[7:0] : 0;
+assign g = 0;
+assign b = (cur_pixel_middle < 0) ? mag[7:0] : 0;
 
 packer pixel_packer(    .aclk(out_stream_aclk),
                         .aresetn(periph_resetn),
