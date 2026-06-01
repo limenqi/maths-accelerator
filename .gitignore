@@ -1,2 +1,17 @@
 .DS_Store
 *.pdf
+overlay/base/base.cache/
+overlay/base/base.gen/
+overlay/base/base.hw/
+overlay/base/base.ip_user_files/
+overlay/base/base.runs/
+overlay/base/base.sim/
+overlay/base/base.srcs/
+overlay/base/base.tmp/
+overlay/base/base.xpr
+overlay/base/ip_upgrade.log
+overlay/pixel_generator_v1_0_project/
+overlay/NA/
+overlay/ip/hls/vitis_hls.log
+overlay/ip/pixel_generator_1.0/tb/stream
+overlay/ip/pixel_generator_1.0/tb/test.vcd

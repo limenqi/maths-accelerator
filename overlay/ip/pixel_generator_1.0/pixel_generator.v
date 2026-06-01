@@ -235,10 +235,23 @@ wire [7:0] r, g, b;
 // assign g = y[7:0] + frame;
 // assign b = x[6:0]+y[6:0] + frame;
 
-reg signed [8:0] p_prev [0:319][0:239];
-reg signed [8:0] p_cur [0:319][0:239];
+//initialize pixel values to 0
+integer i, j;
+initial begin
+    for (i = 0; i < 320; i = i + 1) begin
+        for (j = 0; j < 240; j = j + 1) begin
+            p_cur[i*240 + j] = 9'sd0;
+            p_prev[i*240 + j] = 9'sd0;
+        end
+    end
+    p_cur[160*240 + 120] = 9'sd255; //initial impulse in the middle of the grid, can be changed to other locations or multiple impulses for testing
+end
+
+(* ram_style = "block" *) reg signed [8:0] p_prev [0:76799];
+(* ram_style = "block" *) reg signed [8:0] p_cur  [0:76799];
 
 wire signed [8:0] next_pixel_middle;
+wire signed [8:0] next_pixel_middle_damped;
 wire signed [8:0] cur_pixel_middle;
 wire signed [8:0] cur_pixel_top;
 wire signed [8:0] cur_pixel_bottom;
@@ -249,13 +262,24 @@ wire signed [8:0] prev_pixel_middle;
 // using swap memory as a flag to determine which memory to read from and write to. 
 // to save space on reg file, only use 2 arrays to store pixel values and we swap their roles every frame.
 
-assign cur_pixel_middle  = swap_memory ? p_prev[x_val][y_val] : p_cur[x_val][y_val];
-assign prev_pixel_middle = swap_memory ? p_cur[x_val][y_val]  : p_prev[x_val][y_val];
+assign cur_pixel_middle  = swap_memory ? p_prev[addr_center] : p_cur[addr_center];
+assign prev_pixel_middle = swap_memory ? p_cur[addr_center]  : p_prev[addr_center];
 
-assign cur_pixel_top     = swap_memory ? p_prev[x_val][y_val-1] : p_cur[x_val][y_val-1];
-assign cur_pixel_bottom  = swap_memory ? p_prev[x_val][y_val+1] : p_cur[x_val][y_val+1];
-assign cur_pixel_left    = swap_memory ? p_prev[x_val-1][y_val] : p_cur[x_val-1][y_val];
-assign cur_pixel_right   = swap_memory ? p_prev[x_val+1][y_val] : p_cur[x_val+1][y_val]; 
+wire [8:0] left = (x_val > 0) ? x_val - 1 : 0;
+wire [8:0] right = (x_val < 319) ? x_val + 1 : 319;
+wire [7:0] top = (y_val > 0) ? y_val - 1 : 0;
+wire [7:0] bottom = (y_val < 239) ? y_val + 1 : 239;
+wire [16:0] addr_center = y_val * 320 + x_val;
+wire [16:0] addr_left   = y_val * 320 + left;
+wire [16:0] addr_right  = y_val * 320 + right;
+wire [16:0] addr_top    = top   * 320 + x_val;
+wire [16:0] addr_bottom = bottom* 320 + x_val;
+
+
+assign cur_pixel_top     = swap_memory ? p_prev[addr_top] : p_cur[addr_top];
+assign cur_pixel_bottom  = swap_memory ? p_prev[addr_bottom] : p_cur[addr_bottom];
+assign cur_pixel_left    = swap_memory ? p_prev[addr_left] : p_cur[addr_left];
+assign cur_pixel_right   = swap_memory ? p_prev[addr_right] : p_cur[addr_right]; 
 
 // boundary conditions still not handled currently
 
@@ -265,15 +289,33 @@ object_laplacian laplacian(  .pixel_top(cur_pixel_top), .pixel_bottom(cur_pixel_
                         .wave_speed_squared(0), .wall_case(0),
                         .next_pixel_middle(next_pixel_middle) );
 
+//boundary conditions
+
+wire [8:0] damp_q8;
+wire valid_damp;
+boundary_damping_coeff damping_coeff( .clk(out_stream_aclk), .rstn(periph_resetn), .valid_in(valid_int), .x(x_val), .y(y_val),
+                                    .valid_out(valid_damp), .damp_q8(damp_q8) );
+
+apply_damping damping( .clk(out_stream_aclk), .rstn(periph_resetn), .valid_in(valid_damp), .p_raw(next_pixel_middle), .damp_q8(damp_q8),
+                        .valid_out(), .p_damped(next_pixel_middle_damped) );
+
 always @(posedge out_stream_aclk) begin 
     if(!periph_resetn)
         swap_memory <= 1'b0;
     else if (x_val==319 && y_val==239)
         swap_memory <= ~swap_memory;
-    if(!swap_memory)
-        p_prev[x_val][y_val] <= next_pixel_middle;
-    else
-        p_cur[x_val][y_val] <= next_pixel_middle;
+    if (!swap_memory) begin
+        if (x_val == 160 && y_val == 120)
+            p_prev[addr_center] <= next_pixel_middle_damped + 9'sd40;
+        else
+            p_prev[addr_center] <= next_pixel_middle_damped;
+    end
+    else begin
+        if (x_val == 160 && y_val == 120)
+            p_cur[addr_center] <= next_pixel_middle_damped + 9'sd40;
+        else
+            p_cur[x_val][y_val] <= next_pixel_middle_damped;
+    end
 end
 wire [8:0] mag;
 assign mag = (cur_pixel_middle > 0) ? cur_pixel_middle : -cur_pixel_middle;
