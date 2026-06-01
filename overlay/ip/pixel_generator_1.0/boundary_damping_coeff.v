@@ -1,8 +1,8 @@
 
 module boundary_damping_coeff #(
-    parameter integer WIDTH  = 320,
-    parameter integer HEIGHT = 240,
-    parameter integer BORDER = 50
+    parameter integer WIDTH  = 160,
+    parameter integer HEIGHT = 120,
+    parameter integer BORDER = 24
 )(
     input  wire       clk,
     input  wire       rstn,

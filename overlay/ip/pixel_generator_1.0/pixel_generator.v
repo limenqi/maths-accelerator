@@ -194,13 +194,13 @@ assign s_axi_lite_bresp = (writeAddr < REG_FILE_SIZE) ? AXI_OK : AXI_ERR;
 reg [9:0] x;
 reg [8:0] y;
 
-wire [8:0] x_val;
-wire [7:0] y_val;
+wire [7:0] x_val;
+wire [6:0] y_val;
 
-assign x_val = x[9:1];
-assign y_val = y[8:1];
+assign x_val = x[9:2];
+assign y_val = y[8:2];
 
-//note here we keep output resolution at 640x480 but we simulate a 320x240 grid of pixels, so each pixel simulated takes up 2x2 block of output. 
+//note here we keep output resolution at 640x480 but we simulate a 160x120 grid of pixels, so each pixel simulated takes up 4x4 block of output. 
 //decided to keep this in case other parts of the FPGA is built according to 640x480, don't want to break that.
 wire first = (x == 0) & (y==0);
 wire lastx = (x == X_SIZE - 1);
@@ -238,17 +238,17 @@ wire [7:0] r, g, b;
 //initialize pixel values to 0
 integer i, j;
 initial begin
-    for (i = 0; i < 320; i = i + 1) begin
-        for (j = 0; j < 240; j = j + 1) begin
-            p_cur[i*240 + j] = 9'sd0;
-            p_prev[i*240 + j] = 9'sd0;
+    for (i = 0; i < 160; i = i + 1) begin
+        for (j = 0; j < 120; j = j + 1) begin
+            p_cur[j*160 + i] = 9'sd0;
+            p_prev[j*160 + i] = 9'sd0;
         end
     end
-    p_cur[160*240 + 120] = 9'sd255; //initial impulse in the middle of the grid, can be changed to other locations or multiple impulses for testing
+    p_cur[60*160 + 80] = 9'sd255; //initial impulse in the middle of the grid, can be changed to other locations or multiple impulses for testing
 end
 
-(* ram_style = "block" *) reg signed [8:0] p_prev [0:76799];
-(* ram_style = "block" *) reg signed [8:0] p_cur  [0:76799];
+(* ram_style = "block" *) reg signed [8:0] p_prev [0:19199];
+(* ram_style = "block" *) reg signed [8:0] p_cur  [0:19199];
 
 wire signed [8:0] next_pixel_middle;
 wire signed [8:0] next_pixel_middle_damped;
@@ -262,26 +262,78 @@ wire signed [8:0] prev_pixel_middle;
 // using swap memory as a flag to determine which memory to read from and write to. 
 // to save space on reg file, only use 2 arrays to store pixel values and we swap their roles every frame.
 
-assign cur_pixel_middle  = swap_memory ? p_prev[addr_center] : p_cur[addr_center];
-assign prev_pixel_middle = swap_memory ? p_cur[addr_center]  : p_prev[addr_center];
 
 wire [8:0] left = (x_val > 0) ? x_val - 1 : 0;
-wire [8:0] right = (x_val < 319) ? x_val + 1 : 319;
+wire [8:0] right = (x_val < 159) ? x_val + 1 : 159;
 wire [7:0] top = (y_val > 0) ? y_val - 1 : 0;
-wire [7:0] bottom = (y_val < 239) ? y_val + 1 : 239;
-wire [16:0] addr_center = y_val * 320 + x_val;
-wire [16:0] addr_left   = y_val * 320 + left;
-wire [16:0] addr_right  = y_val * 320 + right;
-wire [16:0] addr_top    = top   * 320 + x_val;
-wire [16:0] addr_bottom = bottom* 320 + x_val;
+wire [7:0] bottom = (y_val < 119) ? y_val + 1 : 119;
 
 
-assign cur_pixel_top     = swap_memory ? p_prev[addr_top] : p_cur[addr_top];
-assign cur_pixel_bottom  = swap_memory ? p_prev[addr_bottom] : p_cur[addr_bottom];
-assign cur_pixel_left    = swap_memory ? p_prev[addr_left] : p_cur[addr_left];
-assign cur_pixel_right   = swap_memory ? p_prev[addr_right] : p_cur[addr_right]; 
+assign prev_pixel_middle = swap_memory ? p_cur[addr_center]  : p_prev[addr_center];
+wire [16:0] addr_center = y_val * 160 + x_val;
 
+//row cache
+
+reg signed [8:0] row_y_minus_1[0:159];
+reg signed [8:0] row_y[0:159];
+reg signed [8:0] row_y_plus_1[0:159];
+reg signed [8:0] row_y_plus_2[0:159];
+
+reg signed [8:0] top_left, top_center, top_right;
+reg signed [8:0] mid_left, mid_center, mid_right;
+reg signed [8:0] bot_left, bot_center, bot_right;
+
+// assign cur_pixel_top     = swap_memory ? p_prev[addr_top] : p_cur[addr_top];
+// assign cur_pixel_bottom  = swap_memory ? p_prev[addr_bottom] : p_cur[addr_bottom];
+// assign cur_pixel_left    = swap_memory ? p_prev[addr_left] : p_cur[addr_left];
+// assign cur_pixel_right   = swap_memory ? p_prev[addr_right] : p_cur[addr_right]; 
+
+wire [7:0] y_plus_2 = (y_val < 118) ? y_val + 2 : 8'd119;
+wire [16:0] addr_y_plus_2 = y_plus_2 * 160 + x_val;
+
+always @(posedge out_stream_aclk) begin
+    if (ready & valid_int) begin
+        if(x_val!=159) begin
+            top_center <= row_y_minus_1[x_val];
+            mid_left   <= row_y[left];
+            mid_center <= row_y[x_val];
+            mid_right  <= row_y[right];
+            bot_center <= row_y_plus_1[x_val];
+            row_y_plus_2[x_val] <= swap_memory ? p_prev[addr_y_plus_2] : p_cur[addr_y_plus_2];
+        end
+    end
+    
+end
+
+assign cur_pixel_top     = top_center;
+assign cur_pixel_bottom  = bot_center;
+assign cur_pixel_left    = mid_left;
+assign cur_pixel_right   = mid_right;
+assign cur_pixel_middle  = mid_center;
 // boundary conditions still not handled currently
+integer col;
+initial begin
+    for (col = 0; col < 160; col = col + 1) 
+        begin
+        row_y_minus_1[col] = p_cur[col];
+        row_y[col] = p_cur[col];
+        row_y_plus_1[col] = p_cur[160 + col];
+        row_y_plus_2[col] = p_cur[320 + col];
+        end
+end
+
+
+always @(posedge out_stream_aclk) begin
+    if (ready & valid_int) begin
+        if(x_val ==159) begin
+            for(col = 0; col < 159; col = col + 1) begin
+                row_y_minus_1[col] <= row_y[col];
+                row_y[col] <= row_y_plus_1[col];
+                row_y_plus_1[col] <= row_y_plus_2[col];
+            end
+        end
+    end
+end
 
 object_laplacian laplacian(  .pixel_top(cur_pixel_top), .pixel_bottom(cur_pixel_bottom), .pixel_left(cur_pixel_left), .pixel_right(cur_pixel_right),
                         .pixel_middle(cur_pixel_middle), .pixel_middle_previous(prev_pixel_middle),
@@ -302,19 +354,25 @@ apply_damping damping( .clk(out_stream_aclk), .rstn(periph_resetn), .valid_in(va
 always @(posedge out_stream_aclk) begin 
     if(!periph_resetn)
         swap_memory <= 1'b0;
-    else if (x_val==319 && y_val==239)
-        swap_memory <= ~swap_memory;
-    if (!swap_memory) begin
-        if (x_val == 160 && y_val == 120)
-            p_prev[addr_center] <= next_pixel_middle_damped + 9'sd40;
-        else
-            p_prev[addr_center] <= next_pixel_middle_damped;
-    end
-    else begin
-        if (x_val == 160 && y_val == 120)
-            p_cur[addr_center] <= next_pixel_middle_damped + 9'sd40;
-        else
-            p_cur[x_val][y_val] <= next_pixel_middle_damped;
+    else if (x_val==159 && y_val==119)
+        if (ready & valid_int) begin
+            swap_memory <= ~swap_memory;
+        end
+    if (ready && valid_int) begin
+        if (x_val != 159) begin
+            if (!swap_memory) begin
+                if (x_val == 80 && y_val == 60)
+                    p_prev[addr_center] <= next_pixel_middle_damped + 9'sd40;
+                else
+                    p_prev[addr_center] <= next_pixel_middle_damped;
+            end
+            else begin
+                if (x_val == 80 && y_val == 60)
+                    p_cur[addr_center] <= next_pixel_middle_damped + 9'sd40;
+                else
+                    p_cur[addr_center] <= next_pixel_middle_damped;
+            end
+        end
     end
 end
 wire [8:0] mag;
