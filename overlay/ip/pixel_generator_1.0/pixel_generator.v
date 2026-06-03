@@ -1,22 +1,21 @@
-
 //////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
+// Company:
+// Engineer:
+//
 // Create Date: 16.05.2024 22:03:08
-// Design Name: 
+// Design Name:
 // Module Name: test_block_v
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
+// Project Name:
+// Target Devices:
+// Tool Versions:
+// Description:
+//
+// Dependencies:
+//
 // Revision:
 // Revision 0.01 - File Created
 // Additional Comments:
-// 
+//
 //////////////////////////////////////////////////////////////////////////////////
 
 
@@ -32,7 +31,7 @@ output [3:0]    out_stream_tkeep,
 output          out_stream_tlast,
 input           out_stream_tready,
 output          out_stream_tvalid,
-output [0:0]    out_stream_tuser, 
+output [0:0]    out_stream_tuser,
 
 //AXI-Lite S
 input [AXI_LITE_ADDR_WIDTH-1:0]     s_axi_lite_araddr,
@@ -54,12 +53,50 @@ output          s_axi_lite_rvalid,
 
 input  [31:0]   s_axi_lite_wdata,
 output          s_axi_lite_wready,
-input           s_axi_lite_wvalid
+input           s_axi_lite_wvalid,
+
+// BRAM port A on the physical p_cur memory block
+output [31:0]   cur_bram_a_addr,
+output          cur_bram_a_clk,
+output [31:0]   cur_bram_a_wrdata,
+input  [31:0]   cur_bram_a_rddata,
+output          cur_bram_a_en,
+output          cur_bram_a_rst,
+output [3:0]    cur_bram_a_we,
+
+// BRAM port B on the physical p_cur memory block
+output [31:0]   cur_bram_b_addr,
+output          cur_bram_b_clk,
+output [31:0]   cur_bram_b_wrdata,
+input  [31:0]   cur_bram_b_rddata,
+output          cur_bram_b_en,
+output          cur_bram_b_rst,
+output [3:0]    cur_bram_b_we,
+
+// BRAM port A on the physical p_prev memory block
+output [31:0]   prev_bram_a_addr,
+output          prev_bram_a_clk,
+output [31:0]   prev_bram_a_wrdata,
+input  [31:0]   prev_bram_a_rddata,
+output          prev_bram_a_en,
+output          prev_bram_a_rst,
+output [3:0]    prev_bram_a_we,
+
+// BRAM port B on the physical p_prev memory block
+output [31:0]   prev_bram_b_addr,
+output          prev_bram_b_clk,
+output [31:0]   prev_bram_b_wrdata,
+input  [31:0]   prev_bram_b_rddata,
+output          prev_bram_b_en,
+output          prev_bram_b_rst,
+output [3:0]    prev_bram_b_we
 
 );
 
 localparam X_SIZE = 640;
 localparam Y_SIZE = 480;
+localparam SIM_X_SIZE = 160;
+localparam SIM_Y_SIZE = 120;
 parameter  REG_FILE_SIZE = 8;
 localparam REG_FILE_AWIDTH = $clog2(REG_FILE_SIZE);
 parameter  AXI_LITE_ADDR_WIDTH = 8;
@@ -85,11 +122,11 @@ reg [2:0]                           writeState = AWAIT_WADD_AND_DATA;
 
 //Read from the register file
 always @(posedge s_axi_lite_aclk) begin
-    
+
     readData <= regfile[readAddr];
 
     if (!axi_resetn) begin
-    readState <= AWAIT_RADD;
+        readState <= AWAIT_RADD;
     end
 
     else case (readState)
@@ -150,7 +187,7 @@ always @(posedge s_axi_lite_aclk) begin
                 default: begin
                     writeState <= AWAIT_WADD_AND_DATA;
                 end
-            endcase        
+            endcase
         end
 
         AWAIT_WDATA: begin //Received address, waiting for data
@@ -189,10 +226,10 @@ assign s_axi_lite_wready = (writeState == AWAIT_WADD_AND_DATA || writeState == A
 assign s_axi_lite_bvalid = (writeState == AWAIT_RESP);
 assign s_axi_lite_bresp = (writeAddr < REG_FILE_SIZE) ? AXI_OK : AXI_ERR;
 
-
-
 reg [9:0] x;
 reg [8:0] y;
+reg swap_memory;
+reg [7:0] frame_counter;
 
 wire [7:0] x_val;
 wire [6:0] y_val;
@@ -200,56 +237,39 @@ wire [6:0] y_val;
 assign x_val = x[9:2];
 assign y_val = y[8:2];
 
-//note here we keep output resolution at 640x480 but we simulate a 160x120 grid of pixels, so each pixel simulated takes up 4x4 block of output. 
+//note here we keep output resolution at 640x480 but we simulate a 160x120 grid of pixels, so each pixel simulated takes up 4x4 block of output.
 //decided to keep this in case other parts of the FPGA is built according to 640x480, don't want to break that.
-wire first = (x == 0) & (y==0);
+wire first = (x == 0) & (y == 0);
 wire lastx = (x == X_SIZE - 1);
 wire lasty = (y == Y_SIZE - 1);
-wire [7:0] frame = regfile[0];
 wire ready;
-reg swap_memory;
+wire valid_int = 1'b1;
 
-
+wire sim_x_last = (x[1:0] == 2'b11);
+wire sim_y_last = (y[1:0] == 2'b11);
+wire sim_cell_tick = ready & valid_int & sim_x_last & sim_y_last;
+wire sim_row_end = sim_cell_tick & (x_val == (SIM_X_SIZE - 1));
 
 always @(posedge out_stream_aclk) begin
     if (periph_resetn) begin
         if (ready & valid_int) begin
             if (lastx) begin
-                x <= 9'd0;
+                x <= 10'd0;
                 if (lasty) y <= 9'd0;
                 else y <= y + 9'd1;
             end
-            else x <= x + 9'd1;
+            else begin
+                x <= x + 10'd1;
+            end
         end
     end
     else begin
-        x <= 0;
-        y <= 0;
+        x <= 10'd0;
+        y <= 9'd0;
     end
 end
-
-wire valid_int = 1'b1;
 
 wire [7:0] r, g, b;
-// assign r = x[7:0] + frame;
-// assign g = y[7:0] + frame;
-// assign b = x[6:0]+y[6:0] + frame;
-
-//initialize pixel values to 0
-integer i, j;
-initial begin
-    for (i = 0; i < 160; i = i + 1) begin
-        for (j = 0; j < 120; j = j + 1) begin
-            p_cur[j*160 + i] = 9'sd0;
-            p_prev[j*160 + i] = 9'sd0;
-        end
-    end
-    p_cur[60*160 + 80] = 9'sd255; //initial impulse in the middle of the grid, can be changed to other locations or multiple impulses for testing
-end
-
-(* ram_style = "block" *) reg signed [8:0] p_prev [0:19199];
-(* ram_style = "block" *) reg signed [8:0] p_cur  [0:19199];
-
 wire signed [8:0] next_pixel_middle;
 wire signed [8:0] next_pixel_middle_damped;
 wire signed [8:0] cur_pixel_middle;
@@ -259,50 +279,131 @@ wire signed [8:0] cur_pixel_left;
 wire signed [8:0] cur_pixel_right;
 wire signed [8:0] prev_pixel_middle;
 
-// using swap memory as a flag to determine which memory to read from and write to. 
-// to save space on reg file, only use 2 arrays to store pixel values and we swap their roles every frame.
-
-
 wire [8:0] left = (x_val > 0) ? x_val - 1 : 0;
-wire [8:0] right = (x_val < 159) ? x_val + 1 : 159;
-wire [7:0] top = (y_val > 0) ? y_val - 1 : 0;
-wire [7:0] bottom = (y_val < 119) ? y_val + 1 : 119;
+wire [8:0] right = (x_val < (SIM_X_SIZE - 1)) ? x_val + 1 : (SIM_X_SIZE - 1);
+wire [7:0] y_plus_2 = (y_val < (SIM_Y_SIZE - 2)) ? y_val + 2 : (SIM_Y_SIZE - 1);
+wire [16:0] addr_center = y_val * SIM_X_SIZE + x_val;
+wire [16:0] addr_y_plus_2 = y_plus_2 * SIM_X_SIZE + x_val;
 
+reg signed [8:0] row_y_minus_1[0:SIM_X_SIZE-1];
+reg signed [8:0] row_y[0:SIM_X_SIZE-1];
+reg signed [8:0] row_y_plus_1[0:SIM_X_SIZE-1];
+reg signed [8:0] row_y_plus_2[0:SIM_X_SIZE-1];
+reg signed [8:0] top_center;
+reg signed [8:0] mid_left;
+reg signed [8:0] mid_center;
+reg signed [8:0] mid_right;
+reg signed [8:0] bot_center;
+reg signed [8:0] prev_pixel_middle_reg;
+reg [7:0] x_val_d;
 
-assign prev_pixel_middle = swap_memory ? p_cur[addr_center]  : p_prev[addr_center];
-wire [16:0] addr_center = y_val * 160 + x_val;
+wire [31:0] current_stream_addr = {15'd0, addr_y_plus_2, 2'b00};
+wire [31:0] previous_center_addr = {15'd0, addr_center, 2'b00};
+wire init_active = (frame_counter < 8'd2);
+wire signed [8:0] current_stream_sample_raw = swap_memory ? prev_bram_a_rddata[8:0] : cur_bram_a_rddata[8:0];
+wire signed [8:0] previous_center_sample_raw = swap_memory ? cur_bram_a_rddata[8:0] : prev_bram_a_rddata[8:0];
+wire signed [8:0] current_stream_sample = init_active ? 9'sd0 : current_stream_sample_raw;
+wire signed [8:0] previous_center_sample = init_active ? 9'sd0 : previous_center_sample_raw;
+wire center_region = (x_val >= 8'd78) && (x_val <= 8'd82) && (y_val >= 7'd58) && (y_val <= 7'd62);
+wire startup_seed_active = init_active && center_region;
+wire center_drive_active = (x_val == 8'd80) && (y_val == 7'd60);
+wire signed [8:0] startup_seed_value = frame_counter[0] ? -9'sd220 : 9'sd220;
+wire signed [8:0] init_fill_value = startup_seed_active ? startup_seed_value : 9'sd0;
+wire signed [8:0] next_pixel_with_impulse = startup_seed_active ? startup_seed_value :
+                                            center_drive_active ? (next_pixel_middle_damped + 9'sd160) :
+                                            next_pixel_middle_damped;
+wire [31:0] destination_addr = {15'd0, addr_center, 2'b00};
+wire [31:0] init_destination_wrdata = {{23{init_fill_value[8]}}, init_fill_value};
+wire [31:0] destination_wrdata = {{23{next_pixel_with_impulse[8]}}, next_pixel_with_impulse};
 
-//row cache
+assign prev_pixel_middle = prev_pixel_middle_reg;
 
-reg signed [8:0] row_y_minus_1[0:159];
-reg signed [8:0] row_y[0:159];
-reg signed [8:0] row_y_plus_1[0:159];
-reg signed [8:0] row_y_plus_2[0:159];
+assign cur_bram_a_clk = out_stream_aclk;
+assign cur_bram_b_clk = out_stream_aclk;
+assign prev_bram_a_clk = out_stream_aclk;
+assign prev_bram_b_clk = out_stream_aclk;
 
-reg signed [8:0] top_left, top_center, top_right;
-reg signed [8:0] mid_left, mid_center, mid_right;
-reg signed [8:0] bot_left, bot_center, bot_right;
+assign cur_bram_a_rst = 1'b0;
+assign cur_bram_b_rst = 1'b0;
+assign prev_bram_a_rst = 1'b0;
+assign prev_bram_b_rst = 1'b0;
 
-// assign cur_pixel_top     = swap_memory ? p_prev[addr_top] : p_cur[addr_top];
-// assign cur_pixel_bottom  = swap_memory ? p_prev[addr_bottom] : p_cur[addr_bottom];
-// assign cur_pixel_left    = swap_memory ? p_prev[addr_left] : p_cur[addr_left];
-// assign cur_pixel_right   = swap_memory ? p_prev[addr_right] : p_cur[addr_right]; 
+assign cur_bram_a_wrdata = 32'd0;
+assign prev_bram_a_wrdata = 32'd0;
+assign cur_bram_a_we = 4'b0000;
+assign prev_bram_a_we = 4'b0000;
 
-wire [7:0] y_plus_2 = (y_val < 118) ? y_val + 2 : 8'd119;
-wire [16:0] addr_y_plus_2 = y_plus_2 * 160 + x_val;
+assign cur_bram_a_en = sim_cell_tick;
+assign prev_bram_a_en = sim_cell_tick;
+assign cur_bram_b_en = sim_cell_tick;
+assign prev_bram_b_en = sim_cell_tick;
+
+// Port A on each BRAM is used for reads. Port B is reserved for writes into the inactive buffer.
+assign cur_bram_a_addr = swap_memory ? previous_center_addr : current_stream_addr;
+assign prev_bram_a_addr = swap_memory ? current_stream_addr : previous_center_addr;
+
+assign cur_bram_b_addr = init_active ? destination_addr : (swap_memory ? destination_addr : 32'd0);
+assign prev_bram_b_addr = init_active ? destination_addr : (swap_memory ? 32'd0 : destination_addr);
+assign cur_bram_b_wrdata = init_active ? init_destination_wrdata : (swap_memory ? destination_wrdata : 32'd0);
+assign prev_bram_b_wrdata = init_active ? init_destination_wrdata : (swap_memory ? 32'd0 : destination_wrdata);
+assign cur_bram_b_we = init_active ? (sim_cell_tick ? 4'b0011 : 4'b0000) :
+                       ((sim_cell_tick & swap_memory) ? 4'b0011 : 4'b0000);
+assign prev_bram_b_we = init_active ? (sim_cell_tick ? 4'b0011 : 4'b0000) :
+                        ((sim_cell_tick & !swap_memory) ? 4'b0011 : 4'b0000);
+
+integer init_col;
+integer col;
+initial begin
+    for (init_col = 0; init_col < SIM_X_SIZE; init_col = init_col + 1) begin
+        row_y_minus_1[init_col] = 9'sd0;
+        row_y[init_col] = 9'sd0;
+        row_y_plus_1[init_col] = 9'sd0;
+        row_y_plus_2[init_col] = 9'sd0;
+    end
+
+    top_center = 9'sd0;
+    mid_left = 9'sd0;
+    mid_center = 9'sd0;
+    mid_right = 9'sd0;
+    bot_center = 9'sd0;
+    prev_pixel_middle_reg = 9'sd0;
+    x_val_d = 8'd0;
+    frame_counter = 8'd0;
+end
 
 always @(posedge out_stream_aclk) begin
-    if (ready & valid_int) begin
-        if(x_val!=159) begin
-            top_center <= row_y_minus_1[x_val];
-            mid_left   <= row_y[left];
-            mid_center <= row_y[x_val];
-            mid_right  <= row_y[right];
-            bot_center <= row_y_plus_1[x_val];
-            row_y_plus_2[x_val] <= swap_memory ? p_prev[addr_y_plus_2] : p_cur[addr_y_plus_2];
+    if (!periph_resetn) begin
+        for (col = 0; col < SIM_X_SIZE; col = col + 1) begin
+            row_y_minus_1[col] <= 9'sd0;
+            row_y[col] <= 9'sd0;
+            row_y_plus_1[col] <= 9'sd0;
+            row_y_plus_2[col] <= 9'sd0;
         end
+        top_center <= 9'sd0;
+        mid_left <= 9'sd0;
+        mid_center <= 9'sd0;
+        mid_right <= 9'sd0;
+        bot_center <= 9'sd0;
+        prev_pixel_middle_reg <= 9'sd0;
+        x_val_d <= 8'd0;
     end
-    
+    else if (sim_cell_tick) begin
+        x_val_d <= x_val;
+        prev_pixel_middle_reg <= previous_center_sample;
+        if (sim_row_end) begin
+            for (col = 0; col < SIM_X_SIZE; col = col + 1) begin
+                row_y_minus_1[col] <= row_y[col];
+                row_y[col] <= row_y_plus_1[col];
+                row_y_plus_1[col] <= row_y_plus_2[col];
+            end
+        end
+        row_y_plus_2[x_val_d] <= current_stream_sample;
+        top_center <= row_y_minus_1[x_val];
+        mid_left <= row_y[left];
+        mid_center <= row_y[x_val];
+        mid_right <= row_y[right];
+        bot_center <= row_y_plus_1[x_val];
+    end
 end
 
 assign cur_pixel_top     = top_center;
@@ -310,85 +411,78 @@ assign cur_pixel_bottom  = bot_center;
 assign cur_pixel_left    = mid_left;
 assign cur_pixel_right   = mid_right;
 assign cur_pixel_middle  = mid_center;
-// boundary conditions still not handled currently
-integer col;
-initial begin
-    for (col = 0; col < 160; col = col + 1) 
-        begin
-        row_y_minus_1[col] = p_cur[col];
-        row_y[col] = p_cur[col];
-        row_y_plus_1[col] = p_cur[160 + col];
-        row_y_plus_2[col] = p_cur[320 + col];
-        end
-end
 
-
-always @(posedge out_stream_aclk) begin
-    if (ready & valid_int) begin
-        if(x_val ==159) begin
-            for(col = 0; col < 159; col = col + 1) begin
-                row_y_minus_1[col] <= row_y[col];
-                row_y[col] <= row_y_plus_1[col];
-                row_y_plus_1[col] <= row_y_plus_2[col];
-            end
-        end
-    end
-end
-
-object_laplacian laplacian(  .pixel_top(cur_pixel_top), .pixel_bottom(cur_pixel_bottom), .pixel_left(cur_pixel_left), .pixel_right(cur_pixel_right),
-                        .pixel_middle(cur_pixel_middle), .pixel_middle_previous(prev_pixel_middle),
-                        .reflection_to_wall(0), .transmission_to_wall(0), .reflection_to_air(0), .transmission_to_air(0),
-                        .wave_speed_squared(0), .wall_case(0),
-                        .next_pixel_middle(next_pixel_middle) );
-
-//boundary conditions
+object_laplacian laplacian(
+    .pixel_top(cur_pixel_top),
+    .pixel_bottom(cur_pixel_bottom),
+    .pixel_left(cur_pixel_left),
+    .pixel_right(cur_pixel_right),
+    .pixel_middle(cur_pixel_middle),
+    .pixel_middle_previous(prev_pixel_middle),
+    .reflection_to_wall(0),
+    .transmission_to_wall(0),
+    .reflection_to_air(0),
+    .transmission_to_air(0),
+    .wave_speed_squared(64),
+    .wall_case(0),
+    .next_pixel_middle(next_pixel_middle)
+);
 
 wire [8:0] damp_q8;
 wire valid_damp;
-boundary_damping_coeff damping_coeff( .clk(out_stream_aclk), .rstn(periph_resetn), .valid_in(valid_int), .x(x_val), .y(y_val),
-                                    .valid_out(valid_damp), .damp_q8(damp_q8) );
+boundary_damping_coeff damping_coeff(
+    .clk(out_stream_aclk),
+    .rstn(periph_resetn),
+    .valid_in(sim_cell_tick),
+    .x(x_val),
+    .y(y_val),
+    .valid_out(valid_damp),
+    .damp_q8(damp_q8)
+);
 
-apply_damping damping( .clk(out_stream_aclk), .rstn(periph_resetn), .valid_in(valid_damp), .p_raw(next_pixel_middle), .damp_q8(damp_q8),
-                        .valid_out(), .p_damped(next_pixel_middle_damped) );
+apply_damping damping(
+    .clk(out_stream_aclk),
+    .rstn(periph_resetn),
+    .valid_in(sim_cell_tick),
+    .p_raw(next_pixel_middle),
+    .damp_q8(damp_q8),
+    .valid_out(),
+    .p_damped(next_pixel_middle_damped)
+);
 
-always @(posedge out_stream_aclk) begin 
-    if(!periph_resetn)
+always @(posedge out_stream_aclk) begin
+    if (!periph_resetn) begin
         swap_memory <= 1'b0;
-    else if (x_val==159 && y_val==119)
-        if (ready & valid_int) begin
-            swap_memory <= ~swap_memory;
-        end
-    if (ready && valid_int) begin
-        if (x_val != 159) begin
-            if (!swap_memory) begin
-                if (x_val == 80 && y_val == 60)
-                    p_prev[addr_center] <= next_pixel_middle_damped + 9'sd40;
-                else
-                    p_prev[addr_center] <= next_pixel_middle_damped;
-            end
-            else begin
-                if (x_val == 80 && y_val == 60)
-                    p_cur[addr_center] <= next_pixel_middle_damped + 9'sd40;
-                else
-                    p_cur[addr_center] <= next_pixel_middle_damped;
-            end
+        frame_counter <= 8'd0;
+    end
+    else if (sim_cell_tick & (lastx) & (lasty)) begin
+        swap_memory <= ~swap_memory;
+        if (frame_counter != 8'hFF) begin
+            frame_counter <= frame_counter + 8'd1;
         end
     end
 end
+
 wire [8:0] mag;
+wire [10:0] mag_scaled;
+wire [7:0] vis;
+
 assign mag = (cur_pixel_middle > 0) ? cur_pixel_middle : -cur_pixel_middle;
-// magnitude is aboslute value of pressure, how positive pressure is determines red value and how negative pressure is determines blue value, green is not used.
-assign r = (cur_pixel_middle > 0) ? mag[7:0] : 0;
-assign g = 0;
-assign b = (cur_pixel_middle < 0) ? mag[7:0] : 0;
+assign mag_scaled = {mag, 2'b00};  // x4 boost
+assign vis = (mag_scaled > 11'd255) ? 8'hFF : mag_scaled[7:0];
 
-packer pixel_packer(    .aclk(out_stream_aclk),
-                        .aresetn(periph_resetn),
-                        .r(r), .g(g), .b(b),
-                        .eol(lastx), .in_stream_ready(ready), .valid(valid_int), .sof(first),
-                        .out_stream_tdata(out_stream_tdata), .out_stream_tkeep(out_stream_tkeep),
-                        .out_stream_tlast(out_stream_tlast), .out_stream_tready(out_stream_tready),
-                        .out_stream_tvalid(out_stream_tvalid), .out_stream_tuser(out_stream_tuser) );
+assign r = (cur_pixel_middle > 0) ? vis : 8'h00;
+assign g = 8'h00;
+assign b = (cur_pixel_middle < 0) ? vis : 8'h00;
 
- 
+packer pixel_packer(
+    .aclk(out_stream_aclk),
+    .aresetn(periph_resetn),
+    .r(r), .g(g), .b(b),
+    .eol(lastx), .in_stream_ready(ready), .valid(valid_int), .sof(first),
+    .out_stream_tdata(out_stream_tdata), .out_stream_tkeep(out_stream_tkeep),
+    .out_stream_tlast(out_stream_tlast), .out_stream_tready(out_stream_tready),
+    .out_stream_tvalid(out_stream_tvalid), .out_stream_tuser(out_stream_tuser)
+);
+
 endmodule
