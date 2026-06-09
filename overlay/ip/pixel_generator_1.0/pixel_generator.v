@@ -1,24 +1,3 @@
-//////////////////////////////////////////////////////////////////////////////////
-// Company:
-// Engineer:
-//
-// Create Date: 16.05.2024 22:03:08
-// Design Name:
-// Module Name: test_block_v
-// Project Name:
-// Target Devices:
-// Tool Versions:
-// Description:
-//
-// Dependencies:
-//
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-//
-//////////////////////////////////////////////////////////////////////////////////
-
-
 module pixel_generator #(
 parameter AXI_LITE_ADDR_WIDTH = 8,
 parameter REG_FILE_SIZE = 8
@@ -28,7 +7,6 @@ input           s_axi_lite_aclk,
 input           axi_resetn,
 input           periph_resetn,
 
-//Stream output
 output [31:0]   out_stream_tdata,
 output [3:0]    out_stream_tkeep,
 output          out_stream_tlast,
@@ -36,7 +14,6 @@ input           out_stream_tready,
 output          out_stream_tvalid,
 output [0:0]    out_stream_tuser,
 
-//AXI-Lite S
 input [AXI_LITE_ADDR_WIDTH-1:0]     s_axi_lite_araddr,
 output          s_axi_lite_arready,
 input           s_axi_lite_arvalid,
@@ -58,7 +35,6 @@ input  [31:0]   s_axi_lite_wdata,
 output          s_axi_lite_wready,
 input           s_axi_lite_wvalid,
 
-// BRAM port A on the physical p_cur memory block
 output [31:0]   cur_bram_a_addr,
 output          cur_bram_a_clk,
 output [31:0]   cur_bram_a_wrdata,
@@ -67,7 +43,6 @@ output          cur_bram_a_en,
 output          cur_bram_a_rst,
 output [3:0]    cur_bram_a_we,
 
-// BRAM port B on the physical p_cur memory block
 output [31:0]   cur_bram_b_addr,
 output          cur_bram_b_clk,
 output [31:0]   cur_bram_b_wrdata,
@@ -76,7 +51,6 @@ output          cur_bram_b_en,
 output          cur_bram_b_rst,
 output [3:0]    cur_bram_b_we,
 
-// BRAM port A on the physical p_prev memory block
 output [31:0]   prev_bram_a_addr,
 output          prev_bram_a_clk,
 output [31:0]   prev_bram_a_wrdata,
@@ -85,7 +59,6 @@ output          prev_bram_a_en,
 output          prev_bram_a_rst,
 output [3:0]    prev_bram_a_we,
 
-// BRAM port B on the physical p_prev memory block
 output [31:0]   prev_bram_b_addr,
 output          prev_bram_b_clk,
 output [31:0]   prev_bram_b_wrdata,
@@ -100,7 +73,7 @@ localparam X_SIZE = 640;
 localparam Y_SIZE = 480;
 localparam SIM_X_SIZE = 160;
 localparam SIM_Y_SIZE = 120;
-localparam [7:0] DEFAULT_WAVE_SPEED_SQUARED_Q8 = 8'd41; // software K = 0.4^2, Q8 ~= 0.16 * 256
+localparam [7:0] DEFAULT_WAVE_SPEED_SQUARED_Q8 = 8'd41;
 localparam [8:0] DEFAULT_GLOBAL_DAMP_Q8 = 9'd252;
 localparam REG_FILE_AWIDTH = $clog2(REG_FILE_SIZE);
 
@@ -124,14 +97,10 @@ reg [1:0]                           readState = AWAIT_RADD;
 reg [2:0]                           writeState = AWAIT_WADD_AND_DATA;
 (* ASYNC_REG = "TRUE" *) reg [31:0] gp0_pix_meta, gp0_pix;
 (* ASYNC_REG = "TRUE" *) reg [31:0] gp1_pix_meta, gp1_pix;
-(* ASYNC_REG = "TRUE" *) reg [31:0] gp2_pix_meta, gp2_pix;
-(* ASYNC_REG = "TRUE" *) reg [31:0] gp3_pix_meta, gp3_pix;
 (* ASYNC_REG = "TRUE" *) reg [31:0] gp4_pix_meta, gp4_pix;
 (* ASYNC_REG = "TRUE" *) reg [31:0] gp5_pix_meta, gp5_pix;
 (* ASYNC_REG = "TRUE" *) reg [31:0] gp6_pix_meta, gp6_pix;
-(* ASYNC_REG = "TRUE" *) reg [31:0] gp7_pix_meta, gp7_pix;
 
-//Read from the register file
 always @(posedge s_axi_lite_aclk) begin
 
     readData <= regfile[readAddr];
@@ -171,7 +140,6 @@ assign s_axi_lite_rresp = (readAddr < REG_FILE_SIZE) ? AXI_OK : AXI_ERR;
 assign s_axi_lite_rvalid = (readState == AWAIT_READ);
 assign s_axi_lite_rdata = readData;
 
-//Write to the register file, use a state machine to track address write, data write and response read events
 always @(posedge s_axi_lite_aclk) begin
 
     if (!axi_resetn) begin
@@ -180,7 +148,7 @@ always @(posedge s_axi_lite_aclk) begin
 
     else case (writeState)
 
-        AWAIT_WADD_AND_DATA: begin  //Idle, awaiting a write address or data
+        AWAIT_WADD_AND_DATA: begin
             case ({s_axi_lite_awvalid, s_axi_lite_wvalid})
                 2'b10: begin
                     writeAddr <= s_axi_lite_awaddr[2+:REG_FILE_AWIDTH];
@@ -201,26 +169,26 @@ always @(posedge s_axi_lite_aclk) begin
             endcase
         end
 
-        AWAIT_WDATA: begin //Received address, waiting for data
+        AWAIT_WDATA: begin
             if (s_axi_lite_wvalid) begin
                 writeData <= s_axi_lite_wdata;
                 writeState <= AWAIT_WRITE;
             end
         end
 
-        AWAIT_WADD: begin //Received data, waiting for address
+        AWAIT_WADD: begin
             if (s_axi_lite_awvalid) begin
                 writeAddr <= s_axi_lite_awaddr[2+:REG_FILE_AWIDTH];
                 writeState <= AWAIT_WRITE;
             end
         end
 
-        AWAIT_WRITE: begin //Perform the write
+        AWAIT_WRITE: begin
             regfile[writeAddr] <= writeData;
             writeState <= AWAIT_RESP;
         end
 
-        AWAIT_RESP: begin //Wait to send response
+        AWAIT_RESP: begin
             if (s_axi_lite_bready) begin
                 writeState <= AWAIT_WADD_AND_DATA;
             end
@@ -243,37 +211,24 @@ always @(posedge out_stream_aclk) begin
         gp0_pix <= 32'd0;
         gp1_pix_meta <= 32'd0;
         gp1_pix <= 32'd0;
-        gp2_pix_meta <= 32'd0;
-        gp2_pix <= 32'd0;
-        gp3_pix_meta <= 32'd0;
-        gp3_pix <= 32'd0;
         gp4_pix_meta <= 32'd0;
         gp4_pix <= 32'd0;
         gp5_pix_meta <= 32'd0;
         gp5_pix <= 32'd0;
         gp6_pix_meta <= 32'd0;
         gp6_pix <= 32'd0;
-        gp7_pix_meta <= 32'd0;
-        gp7_pix <= 32'd0;
     end
     else begin
-        // GP registers are written in the AXI-lite clock domain; use synced copies in pixel logic.
         gp0_pix_meta <= regfile[0];
         gp0_pix <= gp0_pix_meta;
         gp1_pix_meta <= regfile[1];
         gp1_pix <= gp1_pix_meta;
-        gp2_pix_meta <= regfile[2];
-        gp2_pix <= gp2_pix_meta;
-        gp3_pix_meta <= regfile[3];
-        gp3_pix <= gp3_pix_meta;
         gp4_pix_meta <= regfile[4];
         gp4_pix <= gp4_pix_meta;
         gp5_pix_meta <= regfile[5];
         gp5_pix <= gp5_pix_meta;
         gp6_pix_meta <= regfile[6];
         gp6_pix <= gp6_pix_meta;
-        gp7_pix_meta <= regfile[7];
-        gp7_pix <= gp7_pix_meta;
     end
 end
 
@@ -281,7 +236,6 @@ reg [9:0] x;
 reg [8:0] y;
 reg swap_memory;
 reg [7:0] frame_counter;
-reg [7:0] heartbeat_counter;
 reg [7:0] source_age_counter;
 reg [5:0] source_phase_counter;
 reg gp0_fire_d;
@@ -293,8 +247,6 @@ wire [6:0] y_val;
 assign x_val = x[9:2];
 assign y_val = y[8:2];
 
-//note here we keep output resolution at 640x480 but we simulate a 160x120 grid of pixels, so each pixel simulated takes up 4x4 block of output.
-//decided to keep this in case other parts of the FPGA is built according to 640x480, don't want to break that.
 wire first = (x == 0) & (y == 0);
 wire lastx = (x == X_SIZE - 1);
 wire lasty = (y == Y_SIZE - 1);
@@ -340,16 +292,6 @@ wire [8:0] right = (x_val < (SIM_X_SIZE - 1)) ? x_val + 1 : (SIM_X_SIZE - 1);
 wire [7:0] y_plus_2 = (y_val < (SIM_Y_SIZE - 2)) ? y_val + 2 : (SIM_Y_SIZE - 1);
 wire [16:0] addr_center = y_val * SIM_X_SIZE + x_val;
 wire [16:0] addr_y_plus_2 = y_plus_2 * SIM_X_SIZE + x_val;
-wire [3:0] debug_mode = gp7_pix[3:0];
-wire debug_write_cur = (debug_mode == 4'd3);
-wire debug_write_prev = (debug_mode == 4'd4);
-wire solver_write_active = (debug_mode == 4'd0) || (debug_mode == 4'd7);
-wire debug_read_center = (debug_mode == 4'd1) || (debug_mode == 4'd2) ||
-                         debug_write_cur || debug_write_prev;
-wire signed [8:0] debug_checker_value = (x_val[3] ^ y_val[3]) ? 9'sd220 : -9'sd220;
-wire [31:0] debug_checker_wrdata = {{23{debug_checker_value[8]}}, debug_checker_value};
-wire any_solver_write = |cur_bram_b_we || |prev_bram_b_we;
-
 reg signed [8:0] row_y_minus_1[0:SIM_X_SIZE-1];
 reg signed [8:0] row_y[0:SIM_X_SIZE-1];
 reg signed [8:0] row_y_plus_1[0:SIM_X_SIZE-1];
@@ -372,12 +314,9 @@ reg signed [8:0] init_fill_value_d;
 reg signed [8:0] startup_seed_value_d;
 reg signed [8:0] center_drive_value_d;
 reg swap_memory_d;
-reg solver_write_active_d;
-reg read_data_valid_d;
 
 wire [31:0] current_stream_addr = {17'd0, addr_y_plus_2[14:0]};
 wire [31:0] previous_center_addr = {17'd0, addr_center[14:0]};
-wire [31:0] debug_center_addr = previous_center_addr;
 wire init_active = (frame_counter < 8'd2);
 wire signed [8:0] current_stream_sample_raw = swap_memory ? prev_bram_a_rddata[8:0] : cur_bram_a_rddata[8:0];
 wire signed [8:0] previous_center_sample_raw = swap_memory ? cur_bram_a_rddata[8:0] : prev_bram_a_rddata[8:0];
@@ -426,9 +365,6 @@ reg signed [8:0] center_drive_value_s3;
 reg swap_memory_s1;
 reg swap_memory_s2;
 reg swap_memory_s3;
-reg solver_write_active_s1;
-reg solver_write_active_s2;
-reg solver_write_active_s3;
 reg sim_cell_tick_s1;
 reg valid_apply_in;
 reg [8:0] damp_q8_apply;
@@ -565,28 +501,17 @@ assign prev_bram_a_en = sim_cell_tick;
 assign cur_bram_b_en = sim_cell_tick | valid_damping_out;
 assign prev_bram_b_en = sim_cell_tick | valid_damping_out;
 
-// Port A on each BRAM is used for reads. Port B is reserved for writes into the inactive buffer.
-assign cur_bram_a_addr = debug_read_center ? debug_center_addr :
-                         (swap_memory ? previous_center_addr : current_stream_addr);
-assign prev_bram_a_addr = debug_read_center ? debug_center_addr :
-                          (swap_memory ? current_stream_addr : previous_center_addr);
+assign cur_bram_a_addr = swap_memory ? previous_center_addr : current_stream_addr;
+assign prev_bram_a_addr = swap_memory ? current_stream_addr : previous_center_addr;
 
-assign cur_bram_b_addr = debug_write_cur ? destination_addr :
-                         (init_active_s3 ? destination_addr_s3 : (swap_memory_s3 ? destination_addr_s3 : 32'd0));
-assign prev_bram_b_addr = debug_write_prev ? destination_addr :
-                          (init_active_s3 ? destination_addr_s3 : (swap_memory_s3 ? 32'd0 : destination_addr_s3));
-assign cur_bram_b_wrdata = debug_write_cur ? debug_checker_wrdata :
-                           (init_active_s3 ? init_destination_wrdata : (swap_memory_s3 ? destination_wrdata : 32'd0));
-assign prev_bram_b_wrdata = debug_write_prev ? debug_checker_wrdata :
-                            (init_active_s3 ? init_destination_wrdata : (swap_memory_s3 ? 32'd0 : destination_wrdata));
-assign cur_bram_b_we = debug_write_cur ? (sim_cell_tick ? 4'b0011 : 4'b0000) :
-                       ((solver_write_active_s3 && init_active_s3) ? (valid_damping_out ? 4'b0011 : 4'b0000) :
-                       (solver_write_active_s3 ?
-                       ((valid_damping_out & swap_memory_s3) ? 4'b0011 : 4'b0000) : 4'b0000));
-assign prev_bram_b_we = debug_write_prev ? (sim_cell_tick ? 4'b0011 : 4'b0000) :
-                        ((solver_write_active_s3 && init_active_s3) ? (valid_damping_out ? 4'b0011 : 4'b0000) :
-                        (solver_write_active_s3 ?
-                        ((valid_damping_out & !swap_memory_s3) ? 4'b0011 : 4'b0000) : 4'b0000));
+assign cur_bram_b_addr = init_active_s3 ? destination_addr_s3 : (swap_memory_s3 ? destination_addr_s3 : 32'd0);
+assign prev_bram_b_addr = init_active_s3 ? destination_addr_s3 : (swap_memory_s3 ? 32'd0 : destination_addr_s3);
+assign cur_bram_b_wrdata = init_active_s3 ? init_destination_wrdata : (swap_memory_s3 ? destination_wrdata : 32'd0);
+assign prev_bram_b_wrdata = init_active_s3 ? init_destination_wrdata : (swap_memory_s3 ? 32'd0 : destination_wrdata);
+assign cur_bram_b_we = init_active_s3 ? (valid_damping_out ? 4'b0011 : 4'b0000) :
+                       ((valid_damping_out & swap_memory_s3) ? 4'b0011 : 4'b0000);
+assign prev_bram_b_we = init_active_s3 ? (valid_damping_out ? 4'b0011 : 4'b0000) :
+                        ((valid_damping_out & !swap_memory_s3) ? 4'b0011 : 4'b0000);
 
 integer init_col;
 integer col;
@@ -616,8 +541,6 @@ initial begin
     startup_seed_value_d = 9'sd0;
     center_drive_value_d = 9'sd0;
     swap_memory_d = 1'b0;
-    solver_write_active_d = 1'b0;
-    read_data_valid_d = 1'b0;
     next_pixel_middle_damp_s1 = 9'sd0;
     destination_addr_s1 = 32'd0;
     destination_addr_s2 = 32'd0;
@@ -643,14 +566,10 @@ initial begin
     swap_memory_s1 = 1'b0;
     swap_memory_s2 = 1'b0;
     swap_memory_s3 = 1'b0;
-    solver_write_active_s1 = 1'b0;
-    solver_write_active_s2 = 1'b0;
-    solver_write_active_s3 = 1'b0;
     sim_cell_tick_s1 = 1'b0;
     valid_apply_in = 1'b0;
     damp_q8_apply = 9'd256;
     frame_counter = 8'd0;
-    heartbeat_counter = 8'd0;
     source_age_counter = 8'hFF;
     source_phase_counter = 6'd0;
     gp0_fire_d = 1'b0;
@@ -683,8 +602,6 @@ always @(posedge out_stream_aclk) begin
         startup_seed_value_d <= 9'sd0;
         center_drive_value_d <= 9'sd0;
         swap_memory_d <= 1'b0;
-        solver_write_active_d <= 1'b0;
-        read_data_valid_d <= 1'b0;
     end
     else if (source_clear_pulse) begin
         for (col = 0; col < SIM_X_SIZE; col = col + 1) begin
@@ -711,8 +628,6 @@ always @(posedge out_stream_aclk) begin
         startup_seed_value_d <= 9'sd0;
         center_drive_value_d <= 9'sd0;
         swap_memory_d <= 1'b0;
-        solver_write_active_d <= 1'b0;
-        read_data_valid_d <= 1'b0;
     end
     else if (sim_cell_tick) begin
         x_val_d <= x_val;
@@ -727,8 +642,6 @@ always @(posedge out_stream_aclk) begin
         startup_seed_value_d <= startup_seed_value;
         center_drive_value_d <= center_drive_value;
         swap_memory_d <= swap_memory;
-        solver_write_active_d <= solver_write_active;
-        read_data_valid_d <= 1'b1;
         prev_pixel_middle_reg <= previous_center_sample;
         if (sim_row_end) begin
             for (col = 0; col < SIM_X_SIZE; col = col + 1) begin
@@ -773,9 +686,6 @@ always @(posedge out_stream_aclk) begin
         swap_memory_s1 <= 1'b0;
         swap_memory_s2 <= 1'b0;
         swap_memory_s3 <= 1'b0;
-        solver_write_active_s1 <= 1'b0;
-        solver_write_active_s2 <= 1'b0;
-        solver_write_active_s3 <= 1'b0;
         sim_cell_tick_s1 <= 1'b0;
         valid_apply_in <= 1'b0;
         damp_q8_apply <= 9'd256;
@@ -809,14 +719,10 @@ always @(posedge out_stream_aclk) begin
             swap_memory_s1 <= 1'b0;
             swap_memory_s2 <= 1'b0;
             swap_memory_s3 <= 1'b0;
-            solver_write_active_s1 <= 1'b0;
-            solver_write_active_s2 <= 1'b0;
-            solver_write_active_s3 <= 1'b0;
             valid_apply_in <= 1'b0;
             damp_q8_apply <= 9'd256;
         end
         else begin
-            // boundary_damping_coeff registers x/y for one cycle before damp_q8 is valid.
             if (sim_cell_tick) begin
                 destination_addr_s1 <= destination_addr_d;
                 init_active_s1 <= init_active_d;
@@ -826,14 +732,12 @@ always @(posedge out_stream_aclk) begin
                 startup_seed_value_s1 <= startup_seed_value_d;
                 center_drive_value_s1 <= center_drive_value_d;
                 swap_memory_s1 <= swap_memory_d;
-                solver_write_active_s1 <= solver_write_active_d && read_data_valid_d;
             end
 
             if (sim_cell_tick_s1) begin
                 next_pixel_middle_damp_s1 <= next_pixel_middle;
             end
 
-            // Pre-apply stage: present p_raw and damp_q8 together on the next clock.
             valid_apply_in <= valid_damp;
             damp_q8_apply <= effective_damp_q8;
 
@@ -846,10 +750,8 @@ always @(posedge out_stream_aclk) begin
                 startup_seed_value_s2 <= startup_seed_value_s1;
                 center_drive_value_s2 <= center_drive_value_s1;
                 swap_memory_s2 <= swap_memory_s1;
-                solver_write_active_s2 <= solver_write_active_s1;
             end
 
-            // apply_damping registers once more; this stage matches its valid_out/writeback.
             if (valid_apply_in) begin
                 destination_addr_s3 <= destination_addr_s2;
                 init_active_s3 <= init_active_s2;
@@ -859,7 +761,6 @@ always @(posedge out_stream_aclk) begin
                 startup_seed_value_s3 <= startup_seed_value_s2;
                 center_drive_value_s3 <= center_drive_value_s2;
                 swap_memory_s3 <= swap_memory_s2;
-                solver_write_active_s3 <= solver_write_active_s2;
             end
         end
     end
@@ -895,7 +796,6 @@ boundary_damping_coeff #(
     .clk(out_stream_aclk),
     .rstn(periph_resetn),
     .valid_in(sim_cell_tick),
-    // Map 160x120 solver coordinates onto the 320x240 software-reference damping field.
     .x({1'b0, x_val_d, 1'b0}),
     .y({1'b0, y_val_d, 1'b0}),
     .valid_out(valid_damp),
@@ -918,7 +818,6 @@ always @(posedge out_stream_aclk) begin
     if (!periph_resetn) begin
         swap_memory <= 1'b0;
         frame_counter <= 8'd0;
-        heartbeat_counter <= 8'd0;
         source_age_counter <= 8'hFF;
         source_phase_counter <= 6'd0;
         gp0_fire_d <= 1'b0;
@@ -942,7 +841,6 @@ always @(posedge out_stream_aclk) begin
 
             if (sim_cell_tick & (lastx) & (lasty)) begin
                 swap_memory <= ~swap_memory;
-                heartbeat_counter <= heartbeat_counter + 8'd1;
                 if (!source_fire_pulse && source_age_counter < source_pulse_duration) begin
                     source_age_counter <= source_age_counter + 8'd1;
                     source_phase_counter <= source_phase_counter + source_phase_step;
@@ -955,13 +853,6 @@ always @(posedge out_stream_aclk) begin
     end
 end
 
-wire signed [8:0] cur_bram_readback = cur_bram_a_rddata[8:0];
-wire signed [8:0] prev_bram_readback = prev_bram_a_rddata[8:0];
-wire [7:0] damp_vis = (damp_q8 >= 9'h100) ? 8'hFF : damp_q8[7:0];
-reg signed [8:0] pressure_view;
-reg [7:0] pattern_r;
-reg [7:0] pattern_g;
-reg [7:0] pattern_b;
 wire [8:0] mag;
 wire [10:0] mag_scaled;
 wire [7:0] vis;
@@ -970,72 +861,17 @@ wire [7:0] wave_r;
 wire [7:0] wave_g;
 wire [7:0] wave_b;
 
-always @(*) begin
-    pressure_view = cur_pixel_middle;
-    pattern_r = 8'h00;
-    pattern_g = 8'h00;
-    pattern_b = 8'h00;
-
-    case (debug_mode)
-        4'd0: begin
-            // gp7[3:0] = 0: normal damped solver view from the current row cache.
-            pressure_view = cur_pixel_middle;
-        end
-        4'd1: begin
-            // gp7[3:0] = 1: display signed 9-bit p_cur BRAM readback at addr_center.
-            pressure_view = cur_bram_readback;
-        end
-        4'd2: begin
-            // gp7[3:0] = 2: display signed 9-bit p_prev BRAM readback at addr_center.
-            pressure_view = prev_bram_readback;
-        end
-        4'd3: begin
-            // gp7[3:0] = 3: write a deterministic signed checker into p_cur, then display p_cur readback.
-            pressure_view = cur_bram_readback;
-        end
-        4'd4: begin
-            // gp7[3:0] = 4: write a deterministic signed checker into p_prev, then display p_prev readback.
-            pressure_view = prev_bram_readback;
-        end
-        4'd5: begin
-            // gp7[3:0] = 5: no-BRAM video pattern derived only from x_val/y_val.
-            pattern_r = x_val;
-            pattern_g = {y_val, 1'b0};
-            pattern_b = {8{x_val[4] ^ y_val[4]}};
-        end
-        4'd6: begin
-            // gp7[3:0] = 6: damping coefficient view, bright where damp_q8 is high.
-            pattern_r = 8'h00;
-            pattern_g = damp_vis;
-            pattern_b = 8'h00;
-        end
-        4'd7: begin
-            // gp7[3:0] = 7: reserved raw solver view before damping is applied.
-            pressure_view = clamp_pressure_9(next_pixel_middle);
-        end
-        4'd8: begin
-            // gp7[3:0] = 8: heartbeat/internal progression view only; no solver writes.
-            pattern_r = heartbeat_counter;
-            pattern_g = swap_memory ? 8'hFF : 8'h00;
-            pattern_b = (valid_damping_out || any_solver_write) ? 8'hFF : 8'h00;
-        end
-        default: begin
-            pressure_view = cur_pixel_middle;
-        end
-    endcase
-end
-
-assign mag = (pressure_view > 0) ? pressure_view : -pressure_view;
-assign mag_scaled = {mag, 2'b00};  // x4 boost
+assign mag = (cur_pixel_middle > 0) ? cur_pixel_middle : -cur_pixel_middle;
+assign mag_scaled = {mag, 2'b00};
 assign vis = (mag_scaled > 11'd255) ? 8'hFF : mag_scaled[7:0];
 assign inv_vis = 8'hFF - vis;
-assign wave_r = (pressure_view < 0) ? inv_vis : 8'hFF;
+assign wave_r = (cur_pixel_middle < 0) ? inv_vis : 8'hFF;
 assign wave_g = inv_vis;
-assign wave_b = (pressure_view > 0) ? inv_vis : 8'hFF;
+assign wave_b = (cur_pixel_middle > 0) ? inv_vis : 8'hFF;
 
-assign r = (debug_mode == 4'd5 || debug_mode == 4'd6 || debug_mode == 4'd8) ? pattern_r : wave_r;
-assign g = (debug_mode == 4'd5 || debug_mode == 4'd6 || debug_mode == 4'd8) ? pattern_g : wave_g;
-assign b = (debug_mode == 4'd5 || debug_mode == 4'd6 || debug_mode == 4'd8) ? pattern_b : wave_b;
+assign r = wave_r;
+assign g = wave_g;
+assign b = wave_b;
 
 packer pixel_packer(
     .aclk(out_stream_aclk),
