@@ -43,7 +43,7 @@ module boundary_damping_coeff #(
             valid_s1    <= 1'b0;
             edge_dist_s1 <= 10'd0;
             valid_out   <= 1'b0;
-            damp_q8     <= 9'd256;
+            damp_q8     <= 9'd255;
         end
         else begin
             // Stage 1: nearest-edge distance.
@@ -54,7 +54,7 @@ module boundary_damping_coeff #(
             valid_out <= valid_s1;
 
             if (edge_dist_s1 >= BORDER)
-                damp_q8 <= 9'd256;              // no boundary damping
+                damp_q8 <= 9'd255;
             else
                 damp_q8 <= damping_lut[edge_dist_s1];
         end

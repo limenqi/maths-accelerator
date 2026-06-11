@@ -1,11 +1,11 @@
-module object_laplacian(                 
+module object_laplacian(
 
-input  wire signed [8:0] pixel_top,      // note that pressure should actually be -1 to 1
-input  wire signed [8:0] pixel_bottom,
-input  wire signed [8:0] pixel_left,
-input  wire signed [8:0] pixel_right,
-input  wire signed [8:0] pixel_middle,
-input  wire signed [8:0] pixel_middle_previous,
+input  wire signed [15:0] pixel_top,
+input  wire signed [15:0] pixel_bottom,
+input  wire signed [15:0] pixel_left,
+input  wire signed [15:0] pixel_right,
+input  wire signed [15:0] pixel_middle,
+input  wire signed [15:0] pixel_middle_previous,
 
 input wire signed [8:0] reflection_to_wall,
 input wire signed [8:0] transmission_to_wall,
@@ -16,14 +16,14 @@ input wire [7:0] wave_speed_squared, // c^2 * 256
 
 input wire [4:0] wall_case, //determined by another module
 
-output reg signed [15:0] next_pixel_middle // Pixel to be updated
+output reg signed [17:0] next_pixel_middle // Pixel to be updated, Q6
 );
 
 // Conditioning
-reg signed [8:0] up_eff, down_eff, left_eff, right_eff;
-reg signed [13:0] laplacian;
-reg signed [23:0] wave_term;
-reg signed [23:0] next_temp;
+reg signed [15:0] up_eff, down_eff, left_eff, right_eff;
+reg signed [18:0] laplacian;
+reg signed [27:0] wave_term;
+reg signed [27:0] next_temp;
 always @(*) begin
 
     up_eff    = pixel_top;
@@ -151,7 +151,7 @@ wave_term = ($signed({1'b0, wave_speed_squared}) * laplacian) >>> 8;
 
 // p_next = 2*p_cur - p_prev + ((K * laplacian) >>> 8).
 next_temp = ($signed(pixel_middle) * 2) - $signed(pixel_middle_previous) + wave_term;
-next_pixel_middle = next_temp[15:0];
+next_pixel_middle = next_temp[17:0];
 
 end
 

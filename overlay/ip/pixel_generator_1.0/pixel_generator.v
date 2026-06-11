@@ -1,3 +1,24 @@
+//////////////////////////////////////////////////////////////////////////////////
+// Company:
+// Engineer:
+//
+// Create Date: 16.05.2024 22:03:08
+// Design Name:
+// Module Name: test_block_v
+// Project Name:
+// Target Devices:
+// Tool Versions:
+// Description:
+//
+// Dependencies:
+//
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+//
+//////////////////////////////////////////////////////////////////////////////////
+
+
 module pixel_generator #(
 parameter AXI_LITE_ADDR_WIDTH = 8,
 parameter REG_FILE_SIZE = 8
@@ -7,6 +28,7 @@ input           s_axi_lite_aclk,
 input           axi_resetn,
 input           periph_resetn,
 
+//Stream output
 output [31:0]   out_stream_tdata,
 output [3:0]    out_stream_tkeep,
 output          out_stream_tlast,
@@ -14,6 +36,7 @@ input           out_stream_tready,
 output          out_stream_tvalid,
 output [0:0]    out_stream_tuser,
 
+//AXI-Lite S
 input [AXI_LITE_ADDR_WIDTH-1:0]     s_axi_lite_araddr,
 output          s_axi_lite_arready,
 input           s_axi_lite_arvalid,
@@ -35,6 +58,7 @@ input  [31:0]   s_axi_lite_wdata,
 output          s_axi_lite_wready,
 input           s_axi_lite_wvalid,
 
+// BRAM port A on the physical p_cur memory block
 output [31:0]   cur_bram_a_addr,
 output          cur_bram_a_clk,
 output [31:0]   cur_bram_a_wrdata,
@@ -43,6 +67,7 @@ output          cur_bram_a_en,
 output          cur_bram_a_rst,
 output [3:0]    cur_bram_a_we,
 
+// BRAM port B on the physical p_cur memory block
 output [31:0]   cur_bram_b_addr,
 output          cur_bram_b_clk,
 output [31:0]   cur_bram_b_wrdata,
@@ -51,6 +76,7 @@ output          cur_bram_b_en,
 output          cur_bram_b_rst,
 output [3:0]    cur_bram_b_we,
 
+// BRAM port A on the physical p_prev memory block
 output [31:0]   prev_bram_a_addr,
 output          prev_bram_a_clk,
 output [31:0]   prev_bram_a_wrdata,
@@ -59,6 +85,7 @@ output          prev_bram_a_en,
 output          prev_bram_a_rst,
 output [3:0]    prev_bram_a_we,
 
+// BRAM port B on the physical p_prev memory block
 output [31:0]   prev_bram_b_addr,
 output          prev_bram_b_clk,
 output [31:0]   prev_bram_b_wrdata,
@@ -73,8 +100,6 @@ localparam X_SIZE = 640;
 localparam Y_SIZE = 480;
 localparam SIM_X_SIZE = 160;
 localparam SIM_Y_SIZE = 120;
-localparam [7:0] DEFAULT_WAVE_SPEED_SQUARED_Q8 = 8'd41;
-localparam [8:0] DEFAULT_GLOBAL_DAMP_Q8 = 9'd252;
 localparam REG_FILE_AWIDTH = $clog2(REG_FILE_SIZE);
 
 localparam AWAIT_WADD_AND_DATA = 3'b000;
@@ -95,12 +120,8 @@ reg [REG_FILE_AWIDTH-1:0]           writeAddr, readAddr;
 reg [31:0]                          readData, writeData;
 reg [1:0]                           readState = AWAIT_RADD;
 reg [2:0]                           writeState = AWAIT_WADD_AND_DATA;
-(* ASYNC_REG = "TRUE" *) reg [31:0] gp0_pix_meta, gp0_pix;
-(* ASYNC_REG = "TRUE" *) reg [31:0] gp1_pix_meta, gp1_pix;
-(* ASYNC_REG = "TRUE" *) reg [31:0] gp4_pix_meta, gp4_pix;
-(* ASYNC_REG = "TRUE" *) reg [31:0] gp5_pix_meta, gp5_pix;
-(* ASYNC_REG = "TRUE" *) reg [31:0] gp6_pix_meta, gp6_pix;
 
+//Read from the register file
 always @(posedge s_axi_lite_aclk) begin
 
     readData <= regfile[readAddr];
@@ -140,6 +161,7 @@ assign s_axi_lite_rresp = (readAddr < REG_FILE_SIZE) ? AXI_OK : AXI_ERR;
 assign s_axi_lite_rvalid = (readState == AWAIT_READ);
 assign s_axi_lite_rdata = readData;
 
+//Write to the register file, use a state machine to track address write, data write and response read events
 always @(posedge s_axi_lite_aclk) begin
 
     if (!axi_resetn) begin
@@ -148,7 +170,7 @@ always @(posedge s_axi_lite_aclk) begin
 
     else case (writeState)
 
-        AWAIT_WADD_AND_DATA: begin
+        AWAIT_WADD_AND_DATA: begin  //Idle, awaiting a write address or data
             case ({s_axi_lite_awvalid, s_axi_lite_wvalid})
                 2'b10: begin
                     writeAddr <= s_axi_lite_awaddr[2+:REG_FILE_AWIDTH];
@@ -169,26 +191,26 @@ always @(posedge s_axi_lite_aclk) begin
             endcase
         end
 
-        AWAIT_WDATA: begin
+        AWAIT_WDATA: begin //Received address, waiting for data
             if (s_axi_lite_wvalid) begin
                 writeData <= s_axi_lite_wdata;
                 writeState <= AWAIT_WRITE;
             end
         end
 
-        AWAIT_WADD: begin
+        AWAIT_WADD: begin //Received data, waiting for address
             if (s_axi_lite_awvalid) begin
                 writeAddr <= s_axi_lite_awaddr[2+:REG_FILE_AWIDTH];
                 writeState <= AWAIT_WRITE;
             end
         end
 
-        AWAIT_WRITE: begin
+        AWAIT_WRITE: begin //Perform the write
             regfile[writeAddr] <= writeData;
             writeState <= AWAIT_RESP;
         end
 
-        AWAIT_RESP: begin
+        AWAIT_RESP: begin //Wait to send response
             if (s_axi_lite_bready) begin
                 writeState <= AWAIT_WADD_AND_DATA;
             end
@@ -205,41 +227,19 @@ assign s_axi_lite_wready = (writeState == AWAIT_WADD_AND_DATA || writeState == A
 assign s_axi_lite_bvalid = (writeState == AWAIT_RESP);
 assign s_axi_lite_bresp = (writeAddr < REG_FILE_SIZE) ? AXI_OK : AXI_ERR;
 
-always @(posedge out_stream_aclk) begin
-    if (!periph_resetn) begin
-        gp0_pix_meta <= 32'd0;
-        gp0_pix <= 32'd0;
-        gp1_pix_meta <= 32'd0;
-        gp1_pix <= 32'd0;
-        gp4_pix_meta <= 32'd0;
-        gp4_pix <= 32'd0;
-        gp5_pix_meta <= 32'd0;
-        gp5_pix <= 32'd0;
-        gp6_pix_meta <= 32'd0;
-        gp6_pix <= 32'd0;
-    end
-    else begin
-        gp0_pix_meta <= regfile[0];
-        gp0_pix <= gp0_pix_meta;
-        gp1_pix_meta <= regfile[1];
-        gp1_pix <= gp1_pix_meta;
-        gp4_pix_meta <= regfile[4];
-        gp4_pix <= gp4_pix_meta;
-        gp5_pix_meta <= regfile[5];
-        gp5_pix <= gp5_pix_meta;
-        gp6_pix_meta <= regfile[6];
-        gp6_pix <= gp6_pix_meta;
-    end
-end
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
 
 reg [9:0] x;
 reg [8:0] y;
 reg swap_memory;
 reg [7:0] frame_counter;
-reg [7:0] source_age_counter;
-reg [5:0] source_phase_counter;
-reg gp0_fire_d;
-reg gp0_clear_d;
 
 wire [7:0] x_val;
 wire [6:0] y_val;
@@ -247,22 +247,29 @@ wire [6:0] y_val;
 assign x_val = x[9:2];
 assign y_val = y[8:2];
 
+//note here we keep output resolution at 640x480 but we simulate a 160x120 grid of pixels, so each pixel simulated takes up 4x4 block of output.
+//decided to keep this in case other parts of the FPGA is built according to 640x480, don't want to break that.
 wire first = (x == 0) & (y == 0);
 wire lastx = (x == X_SIZE - 1);
 wire lasty = (y == Y_SIZE - 1);
 wire ready;
-wire valid_int = 1'b1;
+wire port_b_write_active;
+reg port_b_write_active_d;
+wire display_read_prime = port_b_write_active_d & !port_b_write_active;
+wire valid_int = !(port_b_write_active | port_b_write_active_d);
 
 wire sim_x_last = (x[1:0] == 2'b11);
 wire sim_y_last = (y[1:0] == 2'b11);
-wire sim_cell_tick = ready & valid_int & sim_x_last & sim_y_last;
-wire sim_row_end = sim_cell_tick & (x_val == (SIM_X_SIZE - 1));
+wire start_pixel_calc = ready & valid_int & sim_x_last & sim_y_last;
 
+
+// advance display pixel coordinates
 always @(posedge out_stream_aclk) begin
     if (periph_resetn) begin
         if (ready & valid_int) begin
             if (lastx) begin
                 x <= 10'd0;
+                // wrap to next line, if at end of last line wrap to top
                 if (lasty) y <= 9'd0;
                 else y <= y + 9'd1;
             end
@@ -271,498 +278,379 @@ always @(posedge out_stream_aclk) begin
             end
         end
     end
+    // on reset, start at the top-left corner, note active low reset
     else begin
         x <= 10'd0;
         y <= 9'd0;
     end
 end
 
+localparam PRESS_FRAC = 6;
 wire [7:0] r, g, b;
-wire signed [15:0] next_pixel_middle;
-wire signed [15:0] next_pixel_middle_damped;
-wire signed [8:0] cur_pixel_middle;
-wire signed [8:0] cur_pixel_top;
-wire signed [8:0] cur_pixel_bottom;
-wire signed [8:0] cur_pixel_left;
-wire signed [8:0] cur_pixel_right;
-wire signed [8:0] prev_pixel_middle;
+wire signed [17:0] next_pixel_middle;
+wire signed [15:0] cur_pixel_middle;
+wire signed [15:0] solver_pixel_middle;
+wire signed [15:0] cur_pixel_top;
+wire signed [15:0] cur_pixel_bottom;
+wire signed [15:0] cur_pixel_left;
+wire signed [15:0] cur_pixel_right;
+wire signed [15:0] prev_pixel_middle;
 
-wire [8:0] left = (x_val > 0) ? x_val - 1 : 0;
-wire [8:0] right = (x_val < (SIM_X_SIZE - 1)) ? x_val + 1 : (SIM_X_SIZE - 1);
-wire [7:0] y_plus_2 = (y_val < (SIM_Y_SIZE - 2)) ? y_val + 2 : (SIM_Y_SIZE - 1);
+// gives row below current row, clamps to current row if bottom row.
+wire [7:0] y_plus_1 = (y_val < (SIM_Y_SIZE - 1)) ? (y_val + 1) : y_val;
+
 wire [16:0] addr_center = y_val * SIM_X_SIZE + x_val;
-wire [16:0] addr_y_plus_2 = y_plus_2 * SIM_X_SIZE + x_val;
-reg signed [8:0] row_y_minus_1[0:SIM_X_SIZE-1];
-reg signed [8:0] row_y[0:SIM_X_SIZE-1];
-reg signed [8:0] row_y_plus_1[0:SIM_X_SIZE-1];
-reg signed [8:0] row_y_plus_2[0:SIM_X_SIZE-1];
-reg signed [8:0] top_center;
-reg signed [8:0] mid_left;
-reg signed [8:0] mid_center;
-reg signed [8:0] mid_right;
-reg signed [8:0] bot_center;
-reg signed [8:0] prev_pixel_middle_reg;
-reg [7:0] x_val_d;
-reg [6:0] y_val_d;
-reg [8:0] left_d;
-reg [8:0] right_d;
-reg [31:0] destination_addr_d;
-reg init_active_d;
-reg startup_seed_active_d;
-reg center_drive_active_d;
-reg signed [8:0] init_fill_value_d;
-reg signed [8:0] startup_seed_value_d;
-reg signed [8:0] center_drive_value_d;
-reg swap_memory_d;
+wire [7:0] window_center_x_for_read = (x_val == 8'd0) ? 8'd0 : (x_val - 8'd1);
+wire [16:0] addr_previous_center = y_val * SIM_X_SIZE + window_center_x_for_read;
 
-wire [31:0] current_stream_addr = {17'd0, addr_y_plus_2[14:0]};
-wire [31:0] previous_center_addr = {17'd0, addr_center[14:0]};
+wire [16:0] addr_y_plus_1 = y_plus_1 * SIM_X_SIZE + x_val;
+wire [31:0] current_bottom_row_addr = {17'd0, addr_y_plus_1[14:0]};
+wire [31:0] previous_center_addr = {17'd0, addr_previous_center[14:0]};
+wire [31:0] destination_write_addr = {17'd0, addr_center[14:0]};
+wire [31:0] display_center_addr = {17'd0, addr_center[14:0]};
+
+// First 2 frames are init frames used to clear/fill memory.
 wire init_active = (frame_counter < 8'd2);
-wire signed [8:0] current_stream_sample_raw = swap_memory ? prev_bram_a_rddata[8:0] : cur_bram_a_rddata[8:0];
-wire signed [8:0] previous_center_sample_raw = swap_memory ? cur_bram_a_rddata[8:0] : prev_bram_a_rddata[8:0];
-wire signed [8:0] current_stream_sample = init_active ? 9'sd0 : current_stream_sample_raw;
-wire signed [8:0] previous_center_sample = init_active ? 9'sd0 : previous_center_sample_raw;
-wire [7:0] source_x = (gp1_pix[9:0] == 10'd0) ? 8'd40 : gp1_pix[9:2];
-wire [6:0] source_y = (gp1_pix[18:10] == 9'd0) ? 7'd60 : gp1_pix[18:12];
-wire [7:0] source_pulse_duration = (gp5_pix[15:8] == 8'd0) ? 8'd100 : gp5_pix[15:8];
-wire [5:0] source_phase_step = (gp5_pix[5:0] == 6'd0) ? 6'd1 : gp5_pix[5:0];
-wire source_fire_pulse = gp0_pix[0] && !gp0_fire_d;
-wire source_clear_pulse = gp0_pix[1] && !gp0_clear_d;
-wire startup_seed_active = init_active && (x_val == source_x) && (y_val == source_y);
-wire source_pulse_active = source_age_counter < source_pulse_duration;
-wire center_drive_active = source_pulse_active && (x_val == source_x) && (y_val == source_y);
-wire [7:0] wave_speed_squared_q8 = (gp6_pix[7:0] == 8'd0) ? DEFAULT_WAVE_SPEED_SQUARED_Q8 : gp6_pix[7:0];
-wire [8:0] global_damp_q8 = (gp6_pix[16:8] == 9'd0) ? DEFAULT_GLOBAL_DAMP_Q8 : gp6_pix[16:8];
-wire signed [8:0] startup_seed_value = sine_lut_q8({frame_counter[0], 5'd0});
-wire signed [8:0] source_amplitude = (gp4_pix[7:0] == 8'd0) ? 9'sd160 : {1'b0, gp4_pix[7:0]};
-wire signed [8:0] source_sine_q8 = sine_lut_q8(source_phase_counter);
-wire signed [17:0] source_scaled_product = source_amplitude * source_sine_q8;
-wire signed [8:0] center_drive_value = source_scaled_product >>> 8;
-wire signed [8:0] init_fill_value = startup_seed_active ? startup_seed_value : 9'sd0;
-wire [31:0] destination_addr = {17'd0, addr_center[14:0]};
-reg signed [15:0] next_pixel_middle_damp_s1;
-reg [31:0] destination_addr_s1;
-reg [31:0] destination_addr_s2;
-reg [31:0] destination_addr_s3;
-reg init_active_s1;
-reg init_active_s2;
-reg init_active_s3;
-reg startup_seed_active_s1;
-reg startup_seed_active_s2;
-reg startup_seed_active_s3;
-reg center_drive_active_s1;
-reg center_drive_active_s2;
-reg center_drive_active_s3;
-reg signed [8:0] init_fill_value_s1;
-reg signed [8:0] init_fill_value_s2;
-reg signed [8:0] init_fill_value_s3;
-reg signed [8:0] startup_seed_value_s1;
-reg signed [8:0] startup_seed_value_s2;
-reg signed [8:0] startup_seed_value_s3;
-reg signed [8:0] center_drive_value_s1;
-reg signed [8:0] center_drive_value_s2;
-reg signed [8:0] center_drive_value_s3;
-reg swap_memory_s1;
-reg swap_memory_s2;
-reg swap_memory_s3;
-reg sim_cell_tick_s1;
-reg valid_apply_in;
-reg [8:0] damp_q8_apply;
-wire [8:0] damp_q8;
-wire valid_damp;
-wire valid_damping_out;
-wire [17:0] effective_damp_product = damp_q8 * global_damp_q8;
-wire [8:0] effective_damp_q8 = effective_damp_product[17:8];
-wire signed [8:0] next_pixel_damped_clamped = clamp_pressure_9(next_pixel_middle_damped);
-wire signed [8:0] next_pixel_with_impulse = startup_seed_active_s3 ? startup_seed_value_s3 :
-                                            center_drive_active_s3 ? sat_add_pressure_wide(next_pixel_middle_damped, center_drive_value_s3) :
-                                            next_pixel_damped_clamped;
-wire [31:0] init_destination_wrdata = {{23{init_fill_value_s3[8]}}, init_fill_value_s3};
-wire [31:0] destination_wrdata = {{23{next_pixel_with_impulse[8]}}, next_pixel_with_impulse};
 
-function signed [8:0] clamp_pressure_9;
-    input signed [15:0] a;
-    begin
-        if (a > 16'sd255)
-            clamp_pressure_9 = 9'sd255;
-        else if (a < -16'sd256)
-            clamp_pressure_9 = -9'sd256;
-        else
-            clamp_pressure_9 = a[8:0];
+reg [31:0] gp0_video_meta;
+reg [31:0] gp0_video;
+reg [31:0] gp1_video_meta;
+reg [31:0] gp1_video;
+reg [31:0] gp4_video_meta;
+reg [31:0] gp4_video;
+reg [31:0] gp5_video_meta;
+reg [31:0] gp5_video;
+reg gp0_fire_prev;
+reg source_active;
+reg [7:0] source_frames_left;
+
+wire [9:0] source_x_video = gp1_video[9:0];
+wire [8:0] source_y_video = gp1_video[18:10];
+wire [7:0] source_sim_x_video = source_x_video[9:2];
+wire [6:0] source_sim_y_video = source_y_video[8:2];
+wire signed [8:0] source_gain_video = gp4_video[8:0];
+// Gain register is in display units; convert to Q6 state units.
+wire signed [15:0] source_gain_q6 = {{7{source_gain_video[8]}}, source_gain_video} <<< PRESS_FRAC;
+wire [7:0] source_duration_video = (gp5_video[15:8] == 8'd0) ? 8'd1 : gp5_video[15:8];
+wire gp0_fire_now = gp0_video[0] & ~gp0_fire_prev;
+wire signed [15:0] startup_seed_value = 16'sd0;
+
+always @(posedge out_stream_aclk) begin
+    if (!periph_resetn) begin
+        gp0_video_meta <= 32'd0;
+        gp0_video <= 32'd0;
+        gp1_video_meta <= 32'd0;
+        gp1_video <= 32'd0;
+        gp4_video_meta <= 32'd0;
+        gp4_video <= 32'd0;
+        gp5_video_meta <= 32'd0;
+        gp5_video <= 32'd0;
+        gp0_fire_prev <= 1'b0;
+        source_active <= 1'b0;
+        source_frames_left <= 8'd0;
     end
-endfunction
+    else begin
+        gp0_video_meta <= regfile[0];
+        gp0_video <= gp0_video_meta;
+        gp1_video_meta <= regfile[1];
+        gp1_video <= gp1_video_meta;
+        gp4_video_meta <= regfile[4];
+        gp4_video <= gp4_video_meta;
+        gp5_video_meta <= regfile[5];
+        gp5_video <= gp5_video_meta;
+        gp0_fire_prev <= gp0_video[0];
 
-function signed [8:0] sat_add_pressure_wide;
-    input signed [15:0] a;
-    input signed [8:0] b;
-    reg signed [16:0] sum;
-    begin
-        sum = a + b;
-        if (sum > 17'sd255)
-            sat_add_pressure_wide = 9'sd255;
-        else if (sum < -17'sd256)
-            sat_add_pressure_wide = -9'sd256;
-        else
-            sat_add_pressure_wide = sum[8:0];
+        if (gp0_fire_now) begin
+            source_active <= 1'b1;
+            source_frames_left <= source_duration_video;
+        end
+        else if (start_pixel_calc & lastx & lasty & source_active) begin
+            if (source_frames_left <= 8'd1) begin
+                source_active <= 1'b0;
+                source_frames_left <= 8'd0;
+            end
+            else begin
+                source_frames_left <= source_frames_left - 8'd1;
+            end
+        end
     end
-endfunction
+end
 
-function signed [8:0] sine_lut_q8;
-    input [5:0] phase;
-    begin
-        case (phase)
-            6'd0: sine_lut_q8 = 9'sd0;
-            6'd1: sine_lut_q8 = 9'sd25;
-            6'd2: sine_lut_q8 = 9'sd50;
-            6'd3: sine_lut_q8 = 9'sd74;
-            6'd4: sine_lut_q8 = 9'sd98;
-            6'd5: sine_lut_q8 = 9'sd121;
-            6'd6: sine_lut_q8 = 9'sd142;
-            6'd7: sine_lut_q8 = 9'sd162;
-            6'd8: sine_lut_q8 = 9'sd181;
-            6'd9: sine_lut_q8 = 9'sd198;
-            6'd10: sine_lut_q8 = 9'sd213;
-            6'd11: sine_lut_q8 = 9'sd226;
-            6'd12: sine_lut_q8 = 9'sd237;
-            6'd13: sine_lut_q8 = 9'sd245;
-            6'd14: sine_lut_q8 = 9'sd251;
-            6'd15: sine_lut_q8 = 9'sd255;
-            6'd16: sine_lut_q8 = 9'sd255;
-            6'd17: sine_lut_q8 = 9'sd255;
-            6'd18: sine_lut_q8 = 9'sd251;
-            6'd19: sine_lut_q8 = 9'sd245;
-            6'd20: sine_lut_q8 = 9'sd237;
-            6'd21: sine_lut_q8 = 9'sd226;
-            6'd22: sine_lut_q8 = 9'sd213;
-            6'd23: sine_lut_q8 = 9'sd198;
-            6'd24: sine_lut_q8 = 9'sd181;
-            6'd25: sine_lut_q8 = 9'sd162;
-            6'd26: sine_lut_q8 = 9'sd142;
-            6'd27: sine_lut_q8 = 9'sd121;
-            6'd28: sine_lut_q8 = 9'sd98;
-            6'd29: sine_lut_q8 = 9'sd74;
-            6'd30: sine_lut_q8 = 9'sd50;
-            6'd31: sine_lut_q8 = 9'sd25;
-            6'd32: sine_lut_q8 = 9'sd0;
-            6'd33: sine_lut_q8 = -9'sd25;
-            6'd34: sine_lut_q8 = -9'sd50;
-            6'd35: sine_lut_q8 = -9'sd74;
-            6'd36: sine_lut_q8 = -9'sd98;
-            6'd37: sine_lut_q8 = -9'sd121;
-            6'd38: sine_lut_q8 = -9'sd142;
-            6'd39: sine_lut_q8 = -9'sd162;
-            6'd40: sine_lut_q8 = -9'sd181;
-            6'd41: sine_lut_q8 = -9'sd198;
-            6'd42: sine_lut_q8 = -9'sd213;
-            6'd43: sine_lut_q8 = -9'sd226;
-            6'd44: sine_lut_q8 = -9'sd237;
-            6'd45: sine_lut_q8 = -9'sd245;
-            6'd46: sine_lut_q8 = -9'sd251;
-            6'd47: sine_lut_q8 = -9'sd255;
-            6'd48: sine_lut_q8 = -9'sd256;
-            6'd49: sine_lut_q8 = -9'sd255;
-            6'd50: sine_lut_q8 = -9'sd251;
-            6'd51: sine_lut_q8 = -9'sd245;
-            6'd52: sine_lut_q8 = -9'sd237;
-            6'd53: sine_lut_q8 = -9'sd226;
-            6'd54: sine_lut_q8 = -9'sd213;
-            6'd55: sine_lut_q8 = -9'sd198;
-            6'd56: sine_lut_q8 = -9'sd181;
-            6'd57: sine_lut_q8 = -9'sd162;
-            6'd58: sine_lut_q8 = -9'sd142;
-            6'd59: sine_lut_q8 = -9'sd121;
-            6'd60: sine_lut_q8 = -9'sd98;
-            6'd61: sine_lut_q8 = -9'sd74;
-            6'd62: sine_lut_q8 = -9'sd50;
-            6'd63: sine_lut_q8 = -9'sd25;
-        endcase
+// Stage 2 updates this pointer; Stage 0 captures it for the BRAM request.
+reg [7:0] col_ptr;
+
+reg bram_sample_valid;
+reg [7:0] bram_x;
+reg [6:0] bram_y;
+reg [7:0] bram_col;
+reg [31:0] bram_destination_write_addr;
+reg bram_init_active;
+reg signed [15:0] bram_startup_seed_value;
+reg bram_swap_memory;
+
+always @(posedge out_stream_aclk) begin
+    if (!periph_resetn) begin
+        bram_sample_valid <= 1'b0;
+        bram_x <= 8'd0;
+        bram_y <= 7'd0;
+        bram_col <= 8'd0;
+        bram_destination_write_addr <= 32'd0;
+        bram_init_active <= 1'b0;
+        bram_startup_seed_value <= 16'sd0;
+        bram_swap_memory <= 1'b0;
     end
-endfunction
+    else begin
+        bram_sample_valid <= start_pixel_calc;
 
-assign prev_pixel_middle = prev_pixel_middle_reg;
+        if (start_pixel_calc) begin
+            bram_x <= x_val;
+            bram_y <= y_val;
+            bram_col <= col_ptr;
+            bram_destination_write_addr <= destination_write_addr;
+            bram_init_active <= init_active;
+            bram_startup_seed_value <= startup_seed_value;
+            bram_swap_memory <= swap_memory;
+        end
+    end
+end
 
 assign cur_bram_a_clk = out_stream_aclk;
 assign cur_bram_b_clk = out_stream_aclk;
 assign prev_bram_a_clk = out_stream_aclk;
 assign prev_bram_b_clk = out_stream_aclk;
 
+//reset is disabled
 assign cur_bram_a_rst = 1'b0;
 assign cur_bram_b_rst = 1'b0;
 assign prev_bram_a_rst = 1'b0;
 assign prev_bram_b_rst = 1'b0;
 
+//write enable is off and write data is 0 as for A is only for reading.
 assign cur_bram_a_wrdata = 32'd0;
 assign prev_bram_a_wrdata = 32'd0;
 assign cur_bram_a_we = 4'b0000;
 assign prev_bram_a_we = 4'b0000;
 
-assign cur_bram_a_en = sim_cell_tick;
-assign prev_bram_a_en = sim_cell_tick;
-assign cur_bram_b_en = sim_cell_tick | valid_damping_out;
-assign prev_bram_b_en = sim_cell_tick | valid_damping_out;
+// enable reading when new simulation pixel starts.
+assign cur_bram_a_en = start_pixel_calc;
+assign prev_bram_a_en = start_pixel_calc;
 
-assign cur_bram_a_addr = swap_memory ? previous_center_addr : current_stream_addr;
-assign prev_bram_a_addr = swap_memory ? current_stream_addr : previous_center_addr;
+// Port A on each BRAM is used for reads. Port B is reserved for writes into the inactive buffer.
+// swap_memory determines which BRAM is read from and which is written to, swapping the roles of current and previous buffers each frame.
+assign cur_bram_a_addr = swap_memory ? previous_center_addr : current_bottom_row_addr;
+assign prev_bram_a_addr = swap_memory ? current_bottom_row_addr : previous_center_addr;
 
-assign cur_bram_b_addr = init_active_s3 ? destination_addr_s3 : (swap_memory_s3 ? destination_addr_s3 : 32'd0);
-assign prev_bram_b_addr = init_active_s3 ? destination_addr_s3 : (swap_memory_s3 ? 32'd0 : destination_addr_s3);
-assign cur_bram_b_wrdata = init_active_s3 ? init_destination_wrdata : (swap_memory_s3 ? destination_wrdata : 32'd0);
-assign prev_bram_b_wrdata = init_active_s3 ? init_destination_wrdata : (swap_memory_s3 ? 32'd0 : destination_wrdata);
-assign cur_bram_b_we = init_active_s3 ? (valid_damping_out ? 4'b0011 : 4'b0000) :
-                       ((valid_damping_out & swap_memory_s3) ? 4'b0011 : 4'b0000);
-assign prev_bram_b_we = init_active_s3 ? (valid_damping_out ? 4'b0011 : 4'b0000) :
-                        ((valid_damping_out & !swap_memory_s3) ? 4'b0011 : 4'b0000);
 
-integer init_col;
-integer col;
-initial begin
-    for (init_col = 0; init_col < SIM_X_SIZE; init_col = init_col + 1) begin
-        row_y_minus_1[init_col] = 9'sd0;
-        row_y[init_col] = 9'sd0;
-        row_y_plus_1[init_col] = 9'sd0;
-        row_y_plus_2[init_col] = 9'sd0;
-    end
+wire signed [15:0] bram_current_bottom_sample =
+    bram_init_active ? 16'sd0 :
+    (bram_swap_memory ? prev_bram_a_rddata[15:0] : cur_bram_a_rddata[15:0]);
 
-    top_center = 9'sd0;
-    mid_left = 9'sd0;
-    mid_center = 9'sd0;
-    mid_right = 9'sd0;
-    bot_center = 9'sd0;
-    prev_pixel_middle_reg = 9'sd0;
-    x_val_d = 8'd0;
-    y_val_d = 7'd0;
-    left_d = 9'd0;
-    right_d = 9'd0;
-    destination_addr_d = 32'd0;
-    init_active_d = 1'b0;
-    startup_seed_active_d = 1'b0;
-    center_drive_active_d = 1'b0;
-    init_fill_value_d = 9'sd0;
-    startup_seed_value_d = 9'sd0;
-    center_drive_value_d = 9'sd0;
-    swap_memory_d = 1'b0;
-    next_pixel_middle_damp_s1 = 9'sd0;
-    destination_addr_s1 = 32'd0;
-    destination_addr_s2 = 32'd0;
-    destination_addr_s3 = 32'd0;
-    init_active_s1 = 1'b0;
-    init_active_s2 = 1'b0;
-    init_active_s3 = 1'b0;
-    startup_seed_active_s1 = 1'b0;
-    startup_seed_active_s2 = 1'b0;
-    startup_seed_active_s3 = 1'b0;
-    center_drive_active_s1 = 1'b0;
-    center_drive_active_s2 = 1'b0;
-    center_drive_active_s3 = 1'b0;
-    init_fill_value_s1 = 9'sd0;
-    init_fill_value_s2 = 9'sd0;
-    init_fill_value_s3 = 9'sd0;
-    startup_seed_value_s1 = 9'sd0;
-    startup_seed_value_s2 = 9'sd0;
-    startup_seed_value_s3 = 9'sd0;
-    center_drive_value_s1 = 9'sd0;
-    center_drive_value_s2 = 9'sd0;
-    center_drive_value_s3 = 9'sd0;
-    swap_memory_s1 = 1'b0;
-    swap_memory_s2 = 1'b0;
-    swap_memory_s3 = 1'b0;
-    sim_cell_tick_s1 = 1'b0;
-    valid_apply_in = 1'b0;
-    damp_q8_apply = 9'd256;
-    frame_counter = 8'd0;
-    source_age_counter = 8'hFF;
-    source_phase_counter = 6'd0;
-    gp0_fire_d = 1'b0;
-    gp0_clear_d = 1'b0;
-end
+wire signed [15:0] bram_previous_center_sample =
+    bram_init_active ? 16'sd0 :
+    (bram_swap_memory ? cur_bram_a_rddata[15:0] : prev_bram_a_rddata[15:0]);
+
+reg window_valid;
+reg [7:0] window_x;
+reg [6:0] window_y;
+reg [31:0] window_destination_write_addr;
+reg window_init_active;
+reg window_startup_seed_active;
+reg window_center_drive_active;
+reg signed [15:0] window_init_fill_value;
+reg signed [15:0] window_startup_seed_value;
+reg window_swap_memory;
 
 always @(posedge out_stream_aclk) begin
     if (!periph_resetn) begin
-        for (col = 0; col < SIM_X_SIZE; col = col + 1) begin
-            row_y_minus_1[col] <= 9'sd0;
-            row_y[col] <= 9'sd0;
-            row_y_plus_1[col] <= 9'sd0;
-            row_y_plus_2[col] <= 9'sd0;
-        end
-        top_center <= 9'sd0;
-        mid_left <= 9'sd0;
-        mid_center <= 9'sd0;
-        mid_right <= 9'sd0;
-        bot_center <= 9'sd0;
-        prev_pixel_middle_reg <= 9'sd0;
-        x_val_d <= 8'd0;
-        y_val_d <= 7'd0;
-        left_d <= 9'd0;
-        right_d <= 9'd0;
-        destination_addr_d <= 32'd0;
-        init_active_d <= 1'b0;
-        startup_seed_active_d <= 1'b0;
-        center_drive_active_d <= 1'b0;
-        init_fill_value_d <= 9'sd0;
-        startup_seed_value_d <= 9'sd0;
-        center_drive_value_d <= 9'sd0;
-        swap_memory_d <= 1'b0;
-    end
-    else if (source_clear_pulse) begin
-        for (col = 0; col < SIM_X_SIZE; col = col + 1) begin
-            row_y_minus_1[col] <= 9'sd0;
-            row_y[col] <= 9'sd0;
-            row_y_plus_1[col] <= 9'sd0;
-            row_y_plus_2[col] <= 9'sd0;
-        end
-        top_center <= 9'sd0;
-        mid_left <= 9'sd0;
-        mid_center <= 9'sd0;
-        mid_right <= 9'sd0;
-        bot_center <= 9'sd0;
-        prev_pixel_middle_reg <= 9'sd0;
-        x_val_d <= 8'd0;
-        y_val_d <= 7'd0;
-        left_d <= 9'd0;
-        right_d <= 9'd0;
-        destination_addr_d <= 32'd0;
-        init_active_d <= 1'b0;
-        startup_seed_active_d <= 1'b0;
-        center_drive_active_d <= 1'b0;
-        init_fill_value_d <= 9'sd0;
-        startup_seed_value_d <= 9'sd0;
-        center_drive_value_d <= 9'sd0;
-        swap_memory_d <= 1'b0;
-    end
-    else if (sim_cell_tick) begin
-        x_val_d <= x_val;
-        y_val_d <= y_val;
-        left_d <= left;
-        right_d <= right;
-        destination_addr_d <= destination_addr;
-        init_active_d <= init_active;
-        startup_seed_active_d <= startup_seed_active;
-        center_drive_active_d <= center_drive_active;
-        init_fill_value_d <= init_fill_value;
-        startup_seed_value_d <= startup_seed_value;
-        center_drive_value_d <= center_drive_value;
-        swap_memory_d <= swap_memory;
-        prev_pixel_middle_reg <= previous_center_sample;
-        if (sim_row_end) begin
-            for (col = 0; col < SIM_X_SIZE; col = col + 1) begin
-                row_y_minus_1[col] <= row_y[col];
-                row_y[col] <= row_y_plus_1[col];
-                row_y_plus_1[col] <= row_y_plus_2[col];
-            end
-        end
-        row_y_plus_2[x_val_d] <= current_stream_sample;
-        top_center <= (y_val_d == 7'd0) ? row_y[x_val_d] : row_y_minus_1[x_val_d];
-        mid_left <= row_y[left_d];
-        mid_center <= row_y[x_val_d];
-        mid_right <= row_y[right_d];
-        bot_center <= (y_val_d == (SIM_Y_SIZE - 1)) ? row_y[x_val_d] : row_y_plus_1[x_val_d];
-    end
-end
-
-always @(posedge out_stream_aclk) begin
-    if (!periph_resetn) begin
-        next_pixel_middle_damp_s1 <= 9'sd0;
-        destination_addr_s1 <= 32'd0;
-        destination_addr_s2 <= 32'd0;
-        destination_addr_s3 <= 32'd0;
-        init_active_s1 <= 1'b0;
-        init_active_s2 <= 1'b0;
-        init_active_s3 <= 1'b0;
-        startup_seed_active_s1 <= 1'b0;
-        startup_seed_active_s2 <= 1'b0;
-        startup_seed_active_s3 <= 1'b0;
-        center_drive_active_s1 <= 1'b0;
-        center_drive_active_s2 <= 1'b0;
-        center_drive_active_s3 <= 1'b0;
-        init_fill_value_s1 <= 9'sd0;
-        init_fill_value_s2 <= 9'sd0;
-        init_fill_value_s3 <= 9'sd0;
-        startup_seed_value_s1 <= 9'sd0;
-        startup_seed_value_s2 <= 9'sd0;
-        startup_seed_value_s3 <= 9'sd0;
-        center_drive_value_s1 <= 9'sd0;
-        center_drive_value_s2 <= 9'sd0;
-        center_drive_value_s3 <= 9'sd0;
-        swap_memory_s1 <= 1'b0;
-        swap_memory_s2 <= 1'b0;
-        swap_memory_s3 <= 1'b0;
-        sim_cell_tick_s1 <= 1'b0;
-        valid_apply_in <= 1'b0;
-        damp_q8_apply <= 9'd256;
+        window_valid <= 1'b0;
+        window_x <= 8'd0;
+        window_y <= 7'd0;
+        window_destination_write_addr <= 32'd0;
+        window_init_active <= 1'b0;
+        window_startup_seed_active <= 1'b0;
+        window_center_drive_active <= 1'b0;
+        window_init_fill_value <= 16'sd0;
+        window_startup_seed_value <= 16'sd0;
+        window_swap_memory <= 1'b0;
     end
     else begin
-        sim_cell_tick_s1 <= sim_cell_tick;
+        window_valid <= bram_sample_valid & (bram_x != 8'd0);
 
-        if (source_clear_pulse) begin
-            next_pixel_middle_damp_s1 <= 9'sd0;
-            destination_addr_s1 <= 32'd0;
-            destination_addr_s2 <= 32'd0;
-            destination_addr_s3 <= 32'd0;
-            init_active_s1 <= 1'b0;
-            init_active_s2 <= 1'b0;
-            init_active_s3 <= 1'b0;
-            startup_seed_active_s1 <= 1'b0;
-            startup_seed_active_s2 <= 1'b0;
-            startup_seed_active_s3 <= 1'b0;
-            center_drive_active_s1 <= 1'b0;
-            center_drive_active_s2 <= 1'b0;
-            center_drive_active_s3 <= 1'b0;
-            init_fill_value_s1 <= 9'sd0;
-            init_fill_value_s2 <= 9'sd0;
-            init_fill_value_s3 <= 9'sd0;
-            startup_seed_value_s1 <= 9'sd0;
-            startup_seed_value_s2 <= 9'sd0;
-            startup_seed_value_s3 <= 9'sd0;
-            center_drive_value_s1 <= 9'sd0;
-            center_drive_value_s2 <= 9'sd0;
-            center_drive_value_s3 <= 9'sd0;
-            swap_memory_s1 <= 1'b0;
-            swap_memory_s2 <= 1'b0;
-            swap_memory_s3 <= 1'b0;
-            valid_apply_in <= 1'b0;
-            damp_q8_apply <= 9'd256;
+        if (bram_sample_valid) begin
+            window_x <= (bram_x == 8'd0) ? 8'd0 : (bram_x - 8'd1);
+            window_y <= bram_y;
+            window_destination_write_addr <= (bram_x == 8'd0) ? bram_destination_write_addr :
+                                             (bram_destination_write_addr - 32'd1);
+            window_init_active <= bram_init_active;
+            window_startup_seed_active <= 1'b0;
+            window_center_drive_active <= source_active &&
+                                          (bram_x == (source_sim_x_video + 8'd1)) &&
+                                          (bram_y == source_sim_y_video);
+            window_init_fill_value <= 16'sd0;
+            window_startup_seed_value <= bram_startup_seed_value;
+            window_swap_memory <= bram_swap_memory;
         end
-        else begin
-            if (sim_cell_tick) begin
-                destination_addr_s1 <= destination_addr_d;
-                init_active_s1 <= init_active_d;
-                startup_seed_active_s1 <= startup_seed_active_d;
-                center_drive_active_s1 <= center_drive_active_d;
-                init_fill_value_s1 <= init_fill_value_d;
-                startup_seed_value_s1 <= startup_seed_value_d;
-                center_drive_value_s1 <= center_drive_value_d;
-                swap_memory_s1 <= swap_memory_d;
-            end
+    end
+end
 
-            if (sim_cell_tick_s1) begin
-                next_pixel_middle_damp_s1 <= next_pixel_middle;
-            end
+reg signed [15:0] row_y[0:SIM_X_SIZE-1];
+reg signed [15:0] row_y_plus_1[0:SIM_X_SIZE-1];
+reg signed [15:0] top_center;
+reg signed [15:0] mid_left;
+reg signed [15:0] mid_center;
+reg signed [15:0] mid_right;
+reg signed [15:0] bot_center;
+reg signed [15:0] prev_pixel_middle_reg;
+reg signed [15:0] render_pixel_middle;
 
-            valid_apply_in <= valid_damp;
-            damp_q8_apply <= effective_damp_q8;
+reg signed [15:0] row_y_out;
+reg signed [15:0] row_y_plus_1_out;
+reg signed [15:0] top0, top1, top2;
+reg signed [15:0] mid0, mid1, mid2;
+reg signed [15:0] bot0, bot1, bot2;
 
-            if (valid_damp) begin
-                destination_addr_s2 <= destination_addr_s1;
-                init_active_s2 <= init_active_s1;
-                startup_seed_active_s2 <= startup_seed_active_s1;
-                center_drive_active_s2 <= center_drive_active_s1;
-                init_fill_value_s2 <= init_fill_value_s1;
-                startup_seed_value_s2 <= startup_seed_value_s1;
-                center_drive_value_s2 <= center_drive_value_s1;
-                swap_memory_s2 <= swap_memory_s1;
-            end
+assign prev_pixel_middle = prev_pixel_middle_reg;
 
-            if (valid_apply_in) begin
-                destination_addr_s3 <= destination_addr_s2;
-                init_active_s3 <= init_active_s2;
-                startup_seed_active_s3 <= startup_seed_active_s2;
-                center_drive_active_s3 <= center_drive_active_s2;
-                init_fill_value_s3 <= init_fill_value_s2;
-                startup_seed_value_s3 <= startup_seed_value_s2;
-                center_drive_value_s3 <= center_drive_value_s2;
-                swap_memory_s3 <= swap_memory_s2;
-            end
+// Simulation/power-up initialization for Stage 2 storage.
+integer init_col;
+initial begin
+    for (init_col = 0; init_col < SIM_X_SIZE; init_col = init_col + 1) begin
+        row_y[init_col] = 16'sd0;
+        row_y_plus_1[init_col] = 16'sd0;
+    end
+    col_ptr = 8'd0;
+    row_y_out = 16'sd0;
+    row_y_plus_1_out = 16'sd0;
+    top0 = 16'sd0;
+    top1 = 16'sd0;
+    top2 = 16'sd0;
+    top_center = 16'sd0;
+    mid0 = 16'sd0;
+    mid1 = 16'sd0;
+    mid2 = 16'sd0;
+    mid_left = 16'sd0;
+    mid_center = 16'sd0;
+    mid_right = 16'sd0;
+    bot0 = 16'sd0;
+    bot1 = 16'sd0;
+    bot2 = 16'sd0;
+    bot_center = 16'sd0;
+    prev_pixel_middle_reg = 16'sd0;
+    render_pixel_middle = 16'sd0;
+    frame_counter = 8'd0;
+end
+
+function signed [15:0] clamp_pressure_q6;
+    input signed [17:0] a;
+    begin
+        if (a > 18'sd16320)
+            clamp_pressure_q6 = 16'sd16320;
+        else if (a < -18'sd16384)
+            clamp_pressure_q6 = -16'sd16384;
+        else
+            clamp_pressure_q6 = a[15:0];
+    end
+endfunction
+
+function signed [15:0] sat_add_pressure_wide;
+    input signed [17:0] a;
+    input signed [15:0] b;
+    reg signed [18:0] sum;
+    begin
+        sum = a + b;
+        if (sum > 19'sd16320)
+            sat_add_pressure_wide = 16'sd16320;
+        else if (sum < -19'sd16384)
+            sat_add_pressure_wide = -16'sd16384;
+        else
+            sat_add_pressure_wide = sum[15:0];
+    end
+endfunction
+
+//
+// Input for the laplacian:
+//
+//          top_center
+// mid_left mid_center mid_right
+//          bot_center
+//
+
+// row_y          holds an older row
+// row_y_plus_1   holds a newer row
+// current_sample is the newest bottom row
+// during each pixel: 
+//
+// top    from row_y
+// middle from row_y_plus_1
+// bottom from bram_current_bottom_sample
+//
+//
+//
+always @(posedge out_stream_aclk) begin
+    if (!periph_resetn) begin
+        for (init_col = 0; init_col < SIM_X_SIZE; init_col = init_col + 1) begin
+            row_y[init_col] <= 16'sd0;
+            row_y_plus_1[init_col] <= 16'sd0;
         end
+        col_ptr <= 8'd0;
+        row_y_out <= 16'sd0;
+        row_y_plus_1_out <= 16'sd0;
+        top0 <= 16'sd0;
+        top1 <= 16'sd0;
+        top2 <= 16'sd0;
+        top_center <= 16'sd0;
+        mid0 <= 16'sd0;
+        mid1 <= 16'sd0;
+        mid2 <= 16'sd0;
+        mid_left <= 16'sd0;
+        mid_center <= 16'sd0;
+        mid_right <= 16'sd0;
+        bot0 <= 16'sd0;
+        bot1 <= 16'sd0;
+        bot2 <= 16'sd0;
+        bot_center <= 16'sd0;
+        prev_pixel_middle_reg <= 16'sd0;
+        render_pixel_middle <= 16'sd0;
+    end
+    else if (bram_sample_valid) begin
+        prev_pixel_middle_reg <= bram_previous_center_sample;
+        // 1-row and 2-row delayed stream outputs
+        row_y_out <= row_y[bram_col];
+        row_y_plus_1_out <= row_y_plus_1[bram_col];
+        // push newer rows into delay storage
+        row_y[bram_col] <= row_y_plus_1[bram_col];
+        row_y_plus_1[bram_col] <= bram_current_bottom_sample;
+        if (bram_col == 0) begin
+            top0 <= 0; top1 <= 0; top2 <= row_y[bram_col];
+            mid0 <= 0; mid1 <= 0; mid2 <= row_y_plus_1[bram_col];
+            bot0 <= 0; bot1 <= 0; bot2 <= bram_current_bottom_sample;
+            top_center <= 0;
+            mid_left   <= 0;
+            mid_center <= 0;
+            mid_right  <= 0;
+            bot_center <= 0;
+        end else begin
+            // shift the 3 column window left, insert the newest sample on the right
+            top0 <= top1; top1 <= top2; top2 <= row_y[bram_col];
+            mid0 <= mid1; mid1 <= mid2; mid2 <= row_y_plus_1[bram_col];
+            bot0 <= bot1; bot1 <= bot2; bot2 <= bram_current_bottom_sample;
+            top_center <= top2;
+            mid_left   <= mid1;
+            mid_center <= mid2;
+            mid_right  <= row_y_plus_1[bram_col];
+            bot_center <= bot2;
+        end
+
+        // column pointer
+        if (bram_col == SIM_X_SIZE - 1)
+            col_ptr <= 0;
+        else
+            col_ptr <= col_ptr + 1;
+    end
+
+    if (periph_resetn && ready & valid_int) begin
+        render_pixel_middle <= init_active ? 16'sd0 :
+                               (swap_memory ? prev_bram_b_rddata[15:0] : cur_bram_b_rddata[15:0]);
     end
 end
 
@@ -770,91 +658,222 @@ assign cur_pixel_top     = top_center;
 assign cur_pixel_bottom  = bot_center;
 assign cur_pixel_left    = mid_left;
 assign cur_pixel_right   = mid_right;
-assign cur_pixel_middle  = mid_center;
+assign solver_pixel_middle = mid_center;
+assign cur_pixel_middle  = render_pixel_middle;
 
 object_laplacian laplacian(
     .pixel_top(cur_pixel_top),
     .pixel_bottom(cur_pixel_bottom),
     .pixel_left(cur_pixel_left),
     .pixel_right(cur_pixel_right),
-    .pixel_middle(cur_pixel_middle),
+    .pixel_middle(solver_pixel_middle),
     .pixel_middle_previous(prev_pixel_middle),
-    .reflection_to_wall(9'sd0),
-    .transmission_to_wall(9'sd0),
-    .reflection_to_air(9'sd0),
-    .transmission_to_air(9'sd0),
-    .wave_speed_squared(wave_speed_squared_q8),
+    .reflection_to_wall(16'sd0),
+    .transmission_to_wall(16'sd0),
+    .reflection_to_air(16'sd0),
+    .transmission_to_air(16'sd0),
+    .wave_speed_squared(8'd64),
     .wall_case(5'd0),
     .next_pixel_middle(next_pixel_middle)
 );
 
-boundary_damping_coeff #(
-    .WIDTH(320),
-    .HEIGHT(240),
-    .BORDER(50)
-) damping_coeff (
+reg signed [17:0] next_pixel_middle_s3;
+reg [31:0] destination_write_addr_s3;
+reg init_active_s3;
+reg startup_seed_active_s3;
+reg center_drive_active_s3;
+reg signed [15:0] init_fill_value_s3;
+reg signed [15:0] startup_seed_value_s3;
+reg swap_memory_s3;
+
+always @(posedge out_stream_aclk) begin
+    if (!periph_resetn) begin
+        next_pixel_middle_s3 <= 18'sd0;
+        destination_write_addr_s3 <= 32'd0;
+        init_active_s3 <= 1'b0;
+        startup_seed_active_s3 <= 1'b0;
+        center_drive_active_s3 <= 1'b0;
+        init_fill_value_s3 <= 16'sd0;
+        startup_seed_value_s3 <= 16'sd0;
+        swap_memory_s3 <= 1'b0;
+    end
+    else begin
+        if (window_valid) begin
+            next_pixel_middle_s3 <= next_pixel_middle;
+            destination_write_addr_s3 <= window_destination_write_addr;
+            init_active_s3 <= window_init_active;
+            startup_seed_active_s3 <= window_startup_seed_active;
+            center_drive_active_s3 <= window_center_drive_active;
+            init_fill_value_s3 <= window_init_fill_value;
+            startup_seed_value_s3 <= window_startup_seed_value;
+            swap_memory_s3 <= window_swap_memory;
+        end
+    end
+end
+
+wire [8:0] damp_q8;
+wire valid_damp;
+boundary_damping_coeff damping_coeff(
     .clk(out_stream_aclk),
     .rstn(periph_resetn),
-    .valid_in(sim_cell_tick),
-    .x({1'b0, x_val_d, 1'b0}),
-    .y({1'b0, y_val_d, 1'b0}),
+    .valid_in(window_valid),
+    .x({2'd0, window_x}),
+    .y({2'd0, window_y}),
     .valid_out(valid_damp),
     .damp_q8(damp_q8)
 );
 
+reg valid_apply_in;
+reg [8:0] damp_q8_apply;
+
+reg [31:0] destination_write_addr_s4;
+reg init_active_s4;
+reg startup_seed_active_s4;
+reg center_drive_active_s4;
+reg signed [15:0] init_fill_value_s4;
+reg signed [15:0] startup_seed_value_s4;
+reg swap_memory_s4;
+
+always @(posedge out_stream_aclk) begin
+    if (!periph_resetn) begin
+        valid_apply_in <= 1'b0;
+        damp_q8_apply <= 9'd256;
+
+        destination_write_addr_s4 <= 32'd0;
+        init_active_s4 <= 1'b0;
+        startup_seed_active_s4 <= 1'b0;
+        center_drive_active_s4 <= 1'b0;
+        init_fill_value_s4 <= 16'sd0;
+        startup_seed_value_s4 <= 16'sd0;
+        swap_memory_s4 <= 1'b0;
+    end
+    else begin
+        valid_apply_in <= valid_damp;
+
+        if (valid_damp) begin
+            damp_q8_apply <= damp_q8;
+        end
+
+        if (valid_damp) begin
+            destination_write_addr_s4 <= destination_write_addr_s3;
+            init_active_s4 <= init_active_s3;
+            startup_seed_active_s4 <= startup_seed_active_s3;
+            center_drive_active_s4 <= center_drive_active_s3;
+            init_fill_value_s4 <= init_fill_value_s3;
+            startup_seed_value_s4 <= startup_seed_value_s3;
+            swap_memory_s4 <= swap_memory_s3;
+        end
+    end
+end
+
+wire pixel_calc_ready;
+wire signed [17:0] next_pixel_middle_damped;
+reg [31:0] destination_write_addr_s5;
+reg init_active_s5;
+reg startup_seed_active_s5;
+reg center_drive_active_s5;
+reg signed [15:0] init_fill_value_s5;
+reg signed [15:0] startup_seed_value_s5;
+reg swap_memory_s5;
+
 apply_damping #(
-    .PRESS_W(16)
+    .PRESS_W(18)
 ) damping (
     .clk(out_stream_aclk),
     .rstn(periph_resetn),
     .valid_in(valid_apply_in),
-    .p_raw(next_pixel_middle_damp_s1),
+    .p_raw(next_pixel_middle_s3),
     .damp_q8(damp_q8_apply),
-    .valid_out(valid_damping_out),
+    .valid_out(pixel_calc_ready),
     .p_damped(next_pixel_middle_damped)
 );
 
 always @(posedge out_stream_aclk) begin
     if (!periph_resetn) begin
-        swap_memory <= 1'b0;
-        frame_counter <= 8'd0;
-        source_age_counter <= 8'hFF;
-        source_phase_counter <= 6'd0;
-        gp0_fire_d <= 1'b0;
-        gp0_clear_d <= 1'b0;
+        destination_write_addr_s5 <= 32'd0;
+        init_active_s5 <= 1'b0;
+        startup_seed_active_s5 <= 1'b0;
+        center_drive_active_s5 <= 1'b0;
+        init_fill_value_s5 <= 16'sd0;
+        startup_seed_value_s5 <= 16'sd0;
+        swap_memory_s5 <= 1'b0;
+    end
+    else if (valid_apply_in) begin
+        destination_write_addr_s5 <= destination_write_addr_s4;
+        init_active_s5 <= init_active_s4;
+        startup_seed_active_s5 <= startup_seed_active_s4;
+        center_drive_active_s5 <= center_drive_active_s4;
+        init_fill_value_s5 <= init_fill_value_s4;
+        startup_seed_value_s5 <= startup_seed_value_s4;
+        swap_memory_s5 <= swap_memory_s4;
+    end
+end
+
+wire signed [15:0] next_pixel_damped_clamped_s5 = clamp_pressure_q6(next_pixel_middle_damped);
+
+wire signed [15:0] next_pixel_with_impulse_s5 =
+    startup_seed_active_s5 ? startup_seed_value_s5 :
+    center_drive_active_s5 ? sat_add_pressure_wide(next_pixel_middle_damped, source_gain_q6) :
+    next_pixel_damped_clamped_s5;
+
+wire [31:0] init_destination_wrdata_s5 =
+    {{16{init_fill_value_s5[15]}}, init_fill_value_s5};
+
+wire [31:0] destination_wrdata_s5 =
+    {{16{next_pixel_with_impulse_s5[15]}}, next_pixel_with_impulse_s5};
+
+wire write_cur_b = init_active_s5 ? pixel_calc_ready : (pixel_calc_ready & swap_memory_s5);
+wire write_prev_b = init_active_s5 ? pixel_calc_ready : (pixel_calc_ready & !swap_memory_s5);
+assign port_b_write_active = write_cur_b | write_prev_b;
+
+assign cur_bram_b_en = (ready & valid_int) | pixel_calc_ready | display_read_prime;
+assign prev_bram_b_en = (ready & valid_int) | pixel_calc_ready | display_read_prime;
+
+assign cur_bram_b_addr =
+    write_cur_b ? destination_write_addr_s5 : display_center_addr;
+
+assign prev_bram_b_addr =
+    write_prev_b ? destination_write_addr_s5 : display_center_addr;
+
+assign cur_bram_b_wrdata =
+    init_active_s5 ? init_destination_wrdata_s5 :
+    (swap_memory_s5 ? destination_wrdata_s5 : 32'd0);
+
+assign prev_bram_b_wrdata =
+    init_active_s5 ? init_destination_wrdata_s5 :
+    (swap_memory_s5 ? 32'd0 : destination_wrdata_s5);
+
+// 4'b0011 writes the lower two bytes, enough for signed 9-bit pressure.
+assign cur_bram_b_we =
+    write_cur_b ? 4'b0011 : 4'b0000;
+
+assign prev_bram_b_we =
+    write_prev_b ? 4'b0011 : 4'b0000;
+
+always @(posedge out_stream_aclk) begin
+    if (!periph_resetn) begin
+        port_b_write_active_d <= 1'b0;
     end
     else begin
-        gp0_fire_d <= gp0_pix[0];
-        gp0_clear_d <= gp0_pix[1];
+        port_b_write_active_d <= port_b_write_active;
+    end
+end
 
-        if (source_clear_pulse) begin
-            swap_memory <= 1'b0;
-            frame_counter <= 8'd0;
-            source_age_counter <= 8'hFF;
-            source_phase_counter <= 6'd0;
-        end
-        else begin
-            if (source_fire_pulse) begin
-                source_age_counter <= 8'd0;
-                source_phase_counter <= 6'd0;
-            end
-
-            if (sim_cell_tick & (lastx) & (lasty)) begin
-                swap_memory <= ~swap_memory;
-                if (!source_fire_pulse && source_age_counter < source_pulse_duration) begin
-                    source_age_counter <= source_age_counter + 8'd1;
-                    source_phase_counter <= source_phase_counter + source_phase_step;
-                end
-                if (frame_counter != 8'hFF) begin
-                    frame_counter <= frame_counter + 8'd1;
-                end
-            end
+always @(posedge out_stream_aclk) begin
+    if (!periph_resetn) begin
+        swap_memory <= 1'b0;
+        frame_counter <= 8'd0;
+    end
+    else if (start_pixel_calc & (lastx) & (lasty)) begin
+        swap_memory <= ~swap_memory;
+        if (frame_counter != 8'hFF) begin
+            frame_counter <= frame_counter + 8'd1;
         end
     end
 end
 
-wire [8:0] mag;
-wire [10:0] mag_scaled;
+wire [15:0] mag;
+wire [11:0] mag_scaled;
 wire [7:0] vis;
 wire [7:0] inv_vis;
 wire [7:0] wave_r;
@@ -862,8 +881,8 @@ wire [7:0] wave_g;
 wire [7:0] wave_b;
 
 assign mag = (cur_pixel_middle > 0) ? cur_pixel_middle : -cur_pixel_middle;
-assign mag_scaled = {mag, 2'b00};
-assign vis = (mag_scaled > 11'd255) ? 8'hFF : mag_scaled[7:0];
+assign mag_scaled = mag[15:4];
+assign vis = (mag_scaled > 12'd255) ? 8'hFF : mag_scaled[7:0];
 assign inv_vis = 8'hFF - vis;
 assign wave_r = (cur_pixel_middle < 0) ? inv_vis : 8'hFF;
 assign wave_g = inv_vis;
@@ -873,14 +892,11 @@ assign r = wave_r;
 assign g = wave_g;
 assign b = wave_b;
 
-packer pixel_packer(
-    .aclk(out_stream_aclk),
-    .aresetn(periph_resetn),
-    .r(r), .g(g), .b(b),
-    .eol(lastx), .in_stream_ready(ready), .valid(valid_int), .sof(first),
-    .out_stream_tdata(out_stream_tdata), .out_stream_tkeep(out_stream_tkeep),
-    .out_stream_tlast(out_stream_tlast), .out_stream_tready(out_stream_tready),
-    .out_stream_tvalid(out_stream_tvalid), .out_stream_tuser(out_stream_tuser)
-);
+assign ready = out_stream_tready;
+assign out_stream_tdata = {8'd0, b, g, r};
+assign out_stream_tkeep = 4'hF;
+assign out_stream_tlast = lastx;
+assign out_stream_tvalid = periph_resetn & valid_int;
+assign out_stream_tuser = periph_resetn & first;
 
 endmodule
