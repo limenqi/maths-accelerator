@@ -7,10 +7,13 @@ input  wire signed [15:0] pixel_right,
 input  wire signed [15:0] pixel_middle,
 input  wire signed [15:0] pixel_middle_previous,
 
-input wire signed [8:0] reflection_to_wall,
-input wire signed [8:0] transmission_to_wall,
-input wire signed [8:0] reflection_to_air,
-input wire signed [8:0] transmission_to_air,
+// Q8 fixed-point coefficients. Widened to 11-bit signed so that a
+// transmission coefficient of T=1.2 (Q8 = 307) fits; signed[8:0] only
+// reached +255 which overflowed for any T>~1.0.
+input wire signed [10:0] reflection_to_wall,
+input wire signed [10:0] transmission_to_wall,
+input wire signed [10:0] reflection_to_air,
+input wire signed [10:0] transmission_to_air,
 
 input wire [7:0] wave_speed_squared, // c^2 * 256
 
@@ -21,7 +24,7 @@ output reg signed [17:0] next_pixel_middle // Pixel to be updated, Q6
 
 // Conditioning
 reg signed [15:0] up_eff, down_eff, left_eff, right_eff;
-reg signed [18:0] laplacian;
+reg signed [19:0] laplacian;
 reg signed [27:0] wave_term;
 reg signed [27:0] next_temp;
 always @(*) begin
@@ -36,7 +39,7 @@ always @(*) begin
     5'd0: begin                      //do not feedbackground case since wrong wave speed will be used, background is not my job
         up_eff    = pixel_top;
         down_eff  = pixel_bottom;
-        left_eff  = pixel_left;  
+        left_eff  = pixel_left;
         right_eff = pixel_right;
     end
 
@@ -83,7 +86,7 @@ always @(*) begin
     5'd9: begin
         up_eff    = pixel_top;
         down_eff  = pixel_bottom;
-        left_eff  = pixel_left;  
+        left_eff  = pixel_left;
         right_eff = pixel_right;
     end
 
@@ -156,4 +159,3 @@ next_pixel_middle = next_temp[17:0];
 end
 
 endmodule
-    

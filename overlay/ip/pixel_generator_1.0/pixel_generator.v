@@ -661,6 +661,85 @@ assign cur_pixel_right   = mid_right;
 assign solver_pixel_middle = mid_center;
 assign cur_pixel_middle  = render_pixel_middle;
 
+// ---------------------------------------------------------------------------
+// Object integration
+// ---------------------------------------------------------------------------
+// A single axis-aligned rectangular object is placed in the simulation grid
+// (SIM_X_SIZE x SIM_Y_SIZE). Each cell carries a 2-bit acoustic impedance:
+// background = BG_Z, object = OBJ_Z. For the cell currently being solved
+// (mid_center, whose grid coordinate is window_x/window_y) and its four
+// orthogonal neighbours, the impedance is looked up and fed to object_set,
+// which returns the wall_case used by object_laplacian to apply the boundary
+// reflection/transmission. Coefficients are derived from acoustic impedance
+// per the physics document (square object example, Z0=1.0, Z_obj=1.5).
+//
+//   R = (Z2 - Z1)/(Z1 + Z2),  T = 2*Z2/(Z1 + Z2)            (air -> object)
+//   R_air = (Z1 - Z2)/(Z1 + Z2),  T_air = 2*Z1/(Z1 + Z2)    (object -> air)
+//
+// With Z1 = 1.0, Z2 = 1.5:  R = 0.2, T = 1.2, R_air = -0.2, T_air = 0.8.
+// Expressed in Q8 (x256): 51, 307, -51, 205.
+// ---------------------------------------------------------------------------
+
+// Object impedance encoding (must match object_set BACKGROUND = 2'b01).
+localparam [1:0] BG_Z  = 2'b01;
+localparam [1:0] OBJ_Z = 2'b10;
+
+// Rectangular object bounds (inclusive) in simulation-grid coordinates.
+// Default: a 20x20 square centred in the 160x120 grid.
+localparam [7:0] OBJ_X0 = 8'd70;
+localparam [7:0] OBJ_X1 = 8'd90;
+localparam [6:0] OBJ_Y0 = 7'd50;
+localparam [6:0] OBJ_Y1 = 7'd70;
+
+// Q8 impedance-derived coefficients (Z0 = 1.0, Z_obj = 1.5).
+localparam signed [10:0] OBJ_REFL_WALL  =  11'sd51;   // R     = 0.2
+localparam signed [10:0] OBJ_TRANS_WALL =  11'sd307;  // T     = 1.2
+localparam signed [10:0] OBJ_REFL_AIR   = -11'sd51;   // R_air = -0.2
+localparam signed [10:0] OBJ_TRANS_AIR  =  11'sd205;  // T_air = 0.8
+
+// Per-cell propagation coefficient (Q8). Background k = 64/256 = 0.25.
+// The impedance-matched object value would be k*(Z2/Z1)^2 = 144 (k = 0.5625),
+// but that exceeds the k <= 0.5 stability bound, so object cells use the
+// background value here for a stable first integration.
+localparam [7:0] K_BG  = 8'd64;
+localparam [7:0] K_OBJ = 8'd64;
+
+function in_obj;
+    input [7:0] xx;
+    input [7:0] yy;
+    begin
+        in_obj = (xx >= OBJ_X0) && (xx <= OBJ_X1) &&
+                 (yy >= OBJ_Y0) && (yy <= OBJ_Y1);
+    end
+endfunction
+
+// Neighbour coordinates of the solved cell (mid_center), clamped at edges.
+wire [7:0] obj_x   = window_x;
+wire [7:0] obj_y   = {1'b0, window_y};
+wire [7:0] obj_xm1 = (window_x == 8'd0)              ? 8'd0                : (window_x - 8'd1);
+wire [7:0] obj_xp1 = (window_x >= (SIM_X_SIZE - 1))  ? (SIM_X_SIZE - 1)    : (window_x + 8'd1);
+wire [7:0] obj_ym1 = (window_y == 7'd0)              ? 8'd0                : ({1'b0, window_y} - 8'd1);
+wire [7:0] obj_yp1 = (window_y >= (SIM_Y_SIZE - 1))  ? (SIM_Y_SIZE - 1)    : ({1'b0, window_y} + 8'd1);
+
+wire [1:0] z_middle = in_obj(obj_x,   obj_y)   ? OBJ_Z : BG_Z;
+wire [1:0] z_top    = in_obj(obj_x,   obj_ym1) ? OBJ_Z : BG_Z;
+wire [1:0] z_bottom = in_obj(obj_x,   obj_yp1) ? OBJ_Z : BG_Z;
+wire [1:0] z_left   = in_obj(obj_xm1, obj_y)   ? OBJ_Z : BG_Z;
+wire [1:0] z_right  = in_obj(obj_xp1, obj_y)   ? OBJ_Z : BG_Z;
+
+wire [4:0] obj_wall_case;
+object_set object_classifier(
+    .top_impedance(z_top),
+    .bottom_impedance(z_bottom),
+    .left_impedance(z_left),
+    .right_impedance(z_right),
+    .middle_impedance(z_middle),
+    .wall_case(obj_wall_case)
+);
+
+// Object interior uses K_OBJ; background uses K_BG.
+wire [7:0] obj_wave_speed_sq = (z_middle != BG_Z) ? K_OBJ : K_BG;
+
 object_laplacian laplacian(
     .pixel_top(cur_pixel_top),
     .pixel_bottom(cur_pixel_bottom),
@@ -668,12 +747,12 @@ object_laplacian laplacian(
     .pixel_right(cur_pixel_right),
     .pixel_middle(solver_pixel_middle),
     .pixel_middle_previous(prev_pixel_middle),
-    .reflection_to_wall(16'sd0),
-    .transmission_to_wall(16'sd0),
-    .reflection_to_air(16'sd0),
-    .transmission_to_air(16'sd0),
-    .wave_speed_squared(8'd64),
-    .wall_case(5'd0),
+    .reflection_to_wall(OBJ_REFL_WALL),
+    .transmission_to_wall(OBJ_TRANS_WALL),
+    .reflection_to_air(OBJ_REFL_AIR),
+    .transmission_to_air(OBJ_TRANS_AIR),
+    .wave_speed_squared(obj_wave_speed_sq),
+    .wall_case(obj_wall_case),
     .next_pixel_middle(next_pixel_middle)
 );
 
