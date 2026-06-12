@@ -316,6 +316,10 @@ reg [31:0] gp0_video_meta;
 reg [31:0] gp0_video;
 reg [31:0] gp1_video_meta;
 reg [31:0] gp1_video;
+reg [31:0] gp2_video_meta;
+reg [31:0] gp2_video;
+reg [31:0] gp3_video_meta;
+reg [31:0] gp3_video;
 reg [31:0] gp4_video_meta;
 reg [31:0] gp4_video;
 reg [31:0] gp5_video_meta;
@@ -341,6 +345,10 @@ always @(posedge out_stream_aclk) begin
         gp0_video <= 32'd0;
         gp1_video_meta <= 32'd0;
         gp1_video <= 32'd0;
+        gp2_video_meta <= 32'd0;
+        gp2_video <= 32'd0;
+        gp3_video_meta <= 32'd0;
+        gp3_video <= 32'd0;
         gp4_video_meta <= 32'd0;
         gp4_video <= 32'd0;
         gp5_video_meta <= 32'd0;
@@ -354,6 +362,10 @@ always @(posedge out_stream_aclk) begin
         gp0_video <= gp0_video_meta;
         gp1_video_meta <= regfile[1];
         gp1_video <= gp1_video_meta;
+        gp2_video_meta <= regfile[2];
+        gp2_video <= gp2_video_meta;
+        gp3_video_meta <= regfile[3];
+        gp3_video <= gp3_video_meta;
         gp4_video_meta <= regfile[4];
         gp4_video <= gp4_video_meta;
         gp5_video_meta <= regfile[5];
@@ -691,6 +703,36 @@ localparam [7:0] OBJ_X1 = 8'd90;
 localparam [6:0] OBJ_Y0 = 7'd50;
 localparam [6:0] OBJ_Y1 = 7'd70;
 
+// Runtime object control:
+//   regfile[2][31]    enable runtime object bounds
+//   regfile[2][9:0]   object centre X in 640x480 display coordinates
+//   regfile[2][18:10] object centre Y in 640x480 display coordinates
+//   regfile[3][7:0]   object half-width in simulation cells; 0 keeps default
+//   regfile[3][15:8]  object half-height in simulation cells; 0 keeps default
+wire object_control_enable = gp2_video[31];
+wire [7:0] object_center_x_cfg = gp2_video[9:2];
+wire [6:0] object_center_y_cfg = gp2_video[18:12];
+wire [7:0] object_center_x = object_control_enable ? object_center_x_cfg : 8'd80;
+wire [6:0] object_center_y = object_control_enable ? object_center_y_cfg : 7'd60;
+wire [7:0] object_half_width_raw = (gp3_video[7:0] == 8'd0) ? 8'd10 : gp3_video[7:0];
+wire [7:0] object_half_height_raw = (gp3_video[15:8] == 8'd0) ? 8'd10 : gp3_video[15:8];
+wire [7:0] object_half_width = object_control_enable ? object_half_width_raw : 8'd10;
+wire [7:0] object_half_height = object_control_enable ? object_half_height_raw : 8'd10;
+wire [8:0] object_x1_sum = {1'b0, object_center_x} + {1'b0, object_half_width};
+wire [8:0] object_y1_sum = {2'b00, object_center_y} + {1'b0, object_half_height};
+wire [7:0] object_x0 = object_control_enable ?
+                       ((object_center_x > object_half_width) ? (object_center_x - object_half_width) : 8'd0) :
+                       OBJ_X0;
+wire [7:0] object_x1 = object_control_enable ?
+                       ((object_x1_sum >= SIM_X_SIZE - 1) ? (SIM_X_SIZE - 1) : object_x1_sum[7:0]) :
+                       OBJ_X1;
+wire [6:0] object_y0 = object_control_enable ?
+                       (({1'b0, object_center_y} > object_half_height) ? (object_center_y - object_half_height[6:0]) : 7'd0) :
+                       OBJ_Y0;
+wire [6:0] object_y1 = object_control_enable ?
+                       ((object_y1_sum >= SIM_Y_SIZE - 1) ? (SIM_Y_SIZE - 1) : object_y1_sum[6:0]) :
+                       OBJ_Y1;
+
 // Q8 impedance-derived coefficients (Z0 = 1.0, Z_obj = 1.5).
 localparam signed [10:0] OBJ_REFL_WALL  =  11'sd51;   // R     = 0.2
 localparam signed [10:0] OBJ_TRANS_WALL =  11'sd307;  // T     = 1.2
@@ -708,8 +750,8 @@ function in_obj;
     input [7:0] xx;
     input [7:0] yy;
     begin
-        in_obj = (xx >= OBJ_X0) && (xx <= OBJ_X1) &&
-                 (yy >= OBJ_Y0) && (yy <= OBJ_Y1);
+        in_obj = (xx >= object_x0) && (xx <= object_x1) &&
+                 (yy >= {1'b0, object_y0}) && (yy <= {1'b0, object_y1});
     end
 endfunction
 
