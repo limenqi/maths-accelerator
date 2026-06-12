@@ -1,22 +1,7 @@
-//////////////////////////////////////////////////////////////////////////////////
-// Company:
-// Engineer:
-//
-// Create Date: 16.05.2024 22:03:08
-// Design Name:
-// Module Name: test_block_v
-// Project Name:
-// Target Devices:
-// Tool Versions:
-// Description:
-//
-// Dependencies:
-//
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-//
-//////////////////////////////////////////////////////////////////////////////////
+// pixel_generator.v
+// Wave simulation IP for PYNQ HDMI overlay.
+// Simulates pressure waves on a 320x240 grid displayed at 640x480.
+// Two BRAM ping-pong buffers hold current and previous pressure fields.
 
 
 module pixel_generator #(
@@ -61,45 +46,45 @@ input           s_axi_lite_wvalid,
 // BRAM port A on the physical p_cur memory block
 output [31:0]   cur_bram_a_addr,
 output          cur_bram_a_clk,
-output [31:0]   cur_bram_a_wrdata,
-input  [31:0]   cur_bram_a_rddata,
+output [15:0]   cur_bram_a_wrdata,
+input  [15:0]   cur_bram_a_rddata,
 output          cur_bram_a_en,
 output          cur_bram_a_rst,
-output [3:0]    cur_bram_a_we,
+output [1:0]    cur_bram_a_we,
 
 // BRAM port B on the physical p_cur memory block
 output [31:0]   cur_bram_b_addr,
 output          cur_bram_b_clk,
-output [31:0]   cur_bram_b_wrdata,
-input  [31:0]   cur_bram_b_rddata,
+output [15:0]   cur_bram_b_wrdata,
+input  [15:0]   cur_bram_b_rddata,
 output          cur_bram_b_en,
 output          cur_bram_b_rst,
-output [3:0]    cur_bram_b_we,
+output [1:0]    cur_bram_b_we,
 
 // BRAM port A on the physical p_prev memory block
 output [31:0]   prev_bram_a_addr,
 output          prev_bram_a_clk,
-output [31:0]   prev_bram_a_wrdata,
-input  [31:0]   prev_bram_a_rddata,
+output [15:0]   prev_bram_a_wrdata,
+input  [15:0]   prev_bram_a_rddata,
 output          prev_bram_a_en,
 output          prev_bram_a_rst,
-output [3:0]    prev_bram_a_we,
+output [1:0]    prev_bram_a_we,
 
 // BRAM port B on the physical p_prev memory block
 output [31:0]   prev_bram_b_addr,
 output          prev_bram_b_clk,
-output [31:0]   prev_bram_b_wrdata,
-input  [31:0]   prev_bram_b_rddata,
+output [15:0]   prev_bram_b_wrdata,
+input  [15:0]   prev_bram_b_rddata,
 output          prev_bram_b_en,
 output          prev_bram_b_rst,
-output [3:0]    prev_bram_b_we
+output [1:0]    prev_bram_b_we
 
 );
 
 localparam X_SIZE = 640;
 localparam Y_SIZE = 480;
-localparam SIM_X_SIZE = 160;
-localparam SIM_Y_SIZE = 120;
+localparam SIM_X_SIZE = 320;
+localparam SIM_Y_SIZE = 240;
 localparam REG_FILE_AWIDTH = $clog2(REG_FILE_SIZE);
 
 localparam AWAIT_WADD_AND_DATA = 3'b000;
@@ -228,27 +213,19 @@ assign s_axi_lite_bvalid = (writeState == AWAIT_RESP);
 assign s_axi_lite_bresp = (writeAddr < REG_FILE_SIZE) ? AXI_OK : AXI_ERR;
 
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
 
 reg [9:0] x;
 reg [8:0] y;
 reg swap_memory;
 reg [7:0] frame_counter;
 
-wire [7:0] x_val;
-wire [6:0] y_val;
+wire [8:0] x_val;
+wire [7:0] y_val;
 
-assign x_val = x[9:2];
-assign y_val = y[8:2];
+assign x_val = x[9:1];
+assign y_val = y[8:1];
 
-//note here we keep output resolution at 640x480 but we simulate a 160x120 grid of pixels, so each pixel simulated takes up 4x4 block of output.
-//decided to keep this in case other parts of the FPGA is built according to 640x480, don't want to break that.
+// output is 640x480 but the simulation grid is 320x240; each sim cell maps to a 2x2 display block
 wire first = (x == 0) & (y == 0);
 wire lastx = (x == X_SIZE - 1);
 wire lasty = (y == Y_SIZE - 1);
@@ -258,8 +235,8 @@ reg port_b_write_active_d;
 wire display_read_prime = port_b_write_active_d & !port_b_write_active;
 wire valid_int = !(port_b_write_active | port_b_write_active_d);
 
-wire sim_x_last = (x[1:0] == 2'b11);
-wire sim_y_last = (y[1:0] == 2'b11);
+wire sim_x_last = (x[0] == 1'b1);
+wire sim_y_last = (y[0] == 1'b1);
 wire start_pixel_calc = ready & valid_int & sim_x_last & sim_y_last;
 
 
@@ -300,14 +277,14 @@ wire signed [15:0] prev_pixel_middle;
 wire [7:0] y_plus_1 = (y_val < (SIM_Y_SIZE - 1)) ? (y_val + 1) : y_val;
 
 wire [16:0] addr_center = y_val * SIM_X_SIZE + x_val;
-wire [7:0] window_center_x_for_read = (x_val == 8'd0) ? 8'd0 : (x_val - 8'd1);
+wire [8:0] window_center_x_for_read = (x_val == 9'd0) ? 9'd0 : (x_val - 9'd1);
 wire [16:0] addr_previous_center = y_val * SIM_X_SIZE + window_center_x_for_read;
 
 wire [16:0] addr_y_plus_1 = y_plus_1 * SIM_X_SIZE + x_val;
-wire [31:0] current_bottom_row_addr = {17'd0, addr_y_plus_1[14:0]};
-wire [31:0] previous_center_addr = {17'd0, addr_previous_center[14:0]};
-wire [31:0] destination_write_addr = {17'd0, addr_center[14:0]};
-wire [31:0] display_center_addr = {17'd0, addr_center[14:0]};
+wire [31:0] current_bottom_row_addr = {15'd0, addr_y_plus_1[16:0]};
+wire [31:0] previous_center_addr = {15'd0, addr_previous_center[16:0]};
+wire [31:0] destination_write_addr = {15'd0, addr_center[16:0]};
+wire [31:0] display_center_addr = {15'd0, addr_center[16:0]};
 
 // First 2 frames are init frames used to clear/fill memory.
 wire init_active = (frame_counter < 8'd2);
@@ -330,8 +307,8 @@ reg [7:0] source_frames_left;
 
 wire [9:0] source_x_video = gp1_video[9:0];
 wire [8:0] source_y_video = gp1_video[18:10];
-wire [7:0] source_sim_x_video = source_x_video[9:2];
-wire [6:0] source_sim_y_video = source_y_video[8:2];
+wire [8:0] source_sim_x_video = source_x_video[9:1];
+wire [7:0] source_sim_y_video = source_y_video[8:1];
 wire signed [8:0] source_gain_video = gp4_video[8:0];
 // Gain register is in display units; convert to Q6 state units.
 wire signed [15:0] source_gain_q6 = {{7{source_gain_video[8]}}, source_gain_video} <<< PRESS_FRAC;
@@ -389,12 +366,12 @@ always @(posedge out_stream_aclk) begin
 end
 
 // Stage 2 updates this pointer; Stage 0 captures it for the BRAM request.
-reg [7:0] col_ptr;
+reg [8:0] col_ptr;
 
 reg bram_sample_valid;
-reg [7:0] bram_x;
-reg [6:0] bram_y;
-reg [7:0] bram_col;
+reg [8:0] bram_x;
+reg [7:0] bram_y;
+reg [8:0] bram_col;
 reg [31:0] bram_destination_write_addr;
 reg bram_init_active;
 reg signed [15:0] bram_startup_seed_value;
@@ -403,9 +380,9 @@ reg bram_swap_memory;
 always @(posedge out_stream_aclk) begin
     if (!periph_resetn) begin
         bram_sample_valid <= 1'b0;
-        bram_x <= 8'd0;
-        bram_y <= 7'd0;
-        bram_col <= 8'd0;
+        bram_x <= 9'd0;
+        bram_y <= 8'd0;
+        bram_col <= 9'd0;
         bram_destination_write_addr <= 32'd0;
         bram_init_active <= 1'b0;
         bram_startup_seed_value <= 16'sd0;
@@ -438,10 +415,10 @@ assign prev_bram_a_rst = 1'b0;
 assign prev_bram_b_rst = 1'b0;
 
 //write enable is off and write data is 0 as for A is only for reading.
-assign cur_bram_a_wrdata = 32'd0;
-assign prev_bram_a_wrdata = 32'd0;
-assign cur_bram_a_we = 4'b0000;
-assign prev_bram_a_we = 4'b0000;
+assign cur_bram_a_wrdata = 16'd0;
+assign prev_bram_a_wrdata = 16'd0;
+assign cur_bram_a_we = 2'b00;
+assign prev_bram_a_we = 2'b00;
 
 // enable reading when new simulation pixel starts.
 assign cur_bram_a_en = start_pixel_calc;
@@ -455,15 +432,15 @@ assign prev_bram_a_addr = swap_memory ? current_bottom_row_addr : previous_cente
 
 wire signed [15:0] bram_current_bottom_sample =
     bram_init_active ? 16'sd0 :
-    (bram_swap_memory ? prev_bram_a_rddata[15:0] : cur_bram_a_rddata[15:0]);
+    (bram_swap_memory ? prev_bram_a_rddata : cur_bram_a_rddata);
 
 wire signed [15:0] bram_previous_center_sample =
     bram_init_active ? 16'sd0 :
-    (bram_swap_memory ? cur_bram_a_rddata[15:0] : prev_bram_a_rddata[15:0]);
+    (bram_swap_memory ? cur_bram_a_rddata : prev_bram_a_rddata);
 
 reg window_valid;
-reg [7:0] window_x;
-reg [6:0] window_y;
+reg [8:0] window_x;
+reg [7:0] window_y;
 reg [31:0] window_destination_write_addr;
 reg window_init_active;
 reg window_startup_seed_active;
@@ -475,8 +452,8 @@ reg window_swap_memory;
 always @(posedge out_stream_aclk) begin
     if (!periph_resetn) begin
         window_valid <= 1'b0;
-        window_x <= 8'd0;
-        window_y <= 7'd0;
+        window_x <= 9'd0;
+        window_y <= 8'd0;
         window_destination_write_addr <= 32'd0;
         window_init_active <= 1'b0;
         window_startup_seed_active <= 1'b0;
@@ -486,17 +463,17 @@ always @(posedge out_stream_aclk) begin
         window_swap_memory <= 1'b0;
     end
     else begin
-        window_valid <= bram_sample_valid & (bram_x != 8'd0);
+        window_valid <= bram_sample_valid & (bram_x != 9'd0);
 
         if (bram_sample_valid) begin
-            window_x <= (bram_x == 8'd0) ? 8'd0 : (bram_x - 8'd1);
+            window_x <= (bram_x == 9'd0) ? 9'd0 : (bram_x - 9'd1);
             window_y <= bram_y;
-            window_destination_write_addr <= (bram_x == 8'd0) ? bram_destination_write_addr :
+            window_destination_write_addr <= (bram_x == 9'd0) ? bram_destination_write_addr :
                                              (bram_destination_write_addr - 32'd1);
             window_init_active <= bram_init_active;
             window_startup_seed_active <= 1'b0;
             window_center_drive_active <= source_active &&
-                                          (bram_x == (source_sim_x_video + 8'd1)) &&
+                                          (bram_x == (source_sim_x_video + 9'd1)) &&
                                           (bram_y == source_sim_y_video);
             window_init_fill_value <= 16'sd0;
             window_startup_seed_value <= bram_startup_seed_value;
@@ -530,7 +507,7 @@ initial begin
         row_y[init_col] = 16'sd0;
         row_y_plus_1[init_col] = 16'sd0;
     end
-    col_ptr = 8'd0;
+    col_ptr = 9'd0;
     row_y_out = 16'sd0;
     row_y_plus_1_out = 16'sd0;
     top0 = 16'sd0;
@@ -604,7 +581,7 @@ always @(posedge out_stream_aclk) begin
             row_y[init_col] <= 16'sd0;
             row_y_plus_1[init_col] <= 16'sd0;
         end
-        col_ptr <= 8'd0;
+        col_ptr <= 9'd0;
         row_y_out <= 16'sd0;
         row_y_plus_1_out <= 16'sd0;
         top0 <= 16'sd0;
@@ -662,7 +639,7 @@ always @(posedge out_stream_aclk) begin
 
     if (periph_resetn && ready & valid_int) begin
         render_pixel_middle <= init_active ? 16'sd0 :
-                               (swap_memory ? prev_bram_b_rddata[15:0] : cur_bram_b_rddata[15:0]);
+                               (swap_memory ? prev_bram_b_rddata : cur_bram_b_rddata);
     end
 end
 
@@ -673,35 +650,21 @@ assign cur_pixel_right   = mid_right;
 assign solver_pixel_middle = mid_center;
 assign cur_pixel_middle  = render_pixel_middle;
 
-// ---------------------------------------------------------------------------
 // Object integration
-// ---------------------------------------------------------------------------
-// A single axis-aligned rectangular object is placed in the simulation grid
-// (SIM_X_SIZE x SIM_Y_SIZE). Each cell carries a 2-bit acoustic impedance:
-// background = BG_Z, object = OBJ_Z. For the cell currently being solved
-// (mid_center, whose grid coordinate is window_x/window_y) and its four
-// orthogonal neighbours, the impedance is looked up and fed to object_set,
-// which returns the wall_case used by object_laplacian to apply the boundary
-// reflection/transmission. Coefficients are derived from acoustic impedance
-// per the physics document (square object example, Z0=1.0, Z_obj=1.5).
-//
-//   R = (Z2 - Z1)/(Z1 + Z2),  T = 2*Z2/(Z1 + Z2)            (air -> object)
-//   R_air = (Z1 - Z2)/(Z1 + Z2),  T_air = 2*Z1/(Z1 + Z2)    (object -> air)
-//
-// With Z1 = 1.0, Z2 = 1.5:  R = 0.2, T = 1.2, R_air = -0.2, T_air = 0.8.
-// Expressed in Q8 (x256): 51, 307, -51, 205.
-// ---------------------------------------------------------------------------
+// Rectangular obstacle with acoustic impedance mismatch (Z0=1.0, Z_obj=1.5).
+// R = 0.2, T = 1.2 at air->object boundary; R_air = -0.2, T_air = 0.8 at object->air.
+// Coefficients in Q8 (x256): R=51, T=307, R_air=-51, T_air=205.
 
 // Object impedance encoding (must match object_set BACKGROUND = 2'b01).
 localparam [1:0] BG_Z  = 2'b01;
 localparam [1:0] OBJ_Z = 2'b10;
 
 // Rectangular object bounds (inclusive) in simulation-grid coordinates.
-// Default: a 20x20 square centred in the 160x120 grid.
-localparam [7:0] OBJ_X0 = 8'd70;
-localparam [7:0] OBJ_X1 = 8'd90;
-localparam [6:0] OBJ_Y0 = 7'd50;
-localparam [6:0] OBJ_Y1 = 7'd70;
+// Default: a 40x40 square centred in the 320x240 grid.
+localparam [8:0] OBJ_X0 = 9'd140;
+localparam [8:0] OBJ_X1 = 9'd180;
+localparam [7:0] OBJ_Y0 = 8'd100;
+localparam [7:0] OBJ_Y1 = 8'd140;
 
 // Runtime object control:
 //   regfile[2][31]    enable runtime object bounds
@@ -710,27 +673,27 @@ localparam [6:0] OBJ_Y1 = 7'd70;
 //   regfile[3][7:0]   object half-width in simulation cells; 0 keeps default
 //   regfile[3][15:8]  object half-height in simulation cells; 0 keeps default
 wire object_control_enable = gp2_video[31];
-wire [7:0] object_center_x_cfg = gp2_video[9:2];
-wire [6:0] object_center_y_cfg = gp2_video[18:12];
-wire [7:0] object_center_x = object_control_enable ? object_center_x_cfg : 8'd80;
-wire [6:0] object_center_y = object_control_enable ? object_center_y_cfg : 7'd60;
+wire [8:0] object_center_x_cfg = gp2_video[9:1];
+wire [7:0] object_center_y_cfg = gp2_video[18:11];
+wire [8:0] object_center_x = object_control_enable ? object_center_x_cfg : 9'd160;
+wire [7:0] object_center_y = object_control_enable ? object_center_y_cfg : 8'd120;
 wire [7:0] object_half_width_raw = (gp3_video[7:0] == 8'd0) ? 8'd10 : gp3_video[7:0];
 wire [7:0] object_half_height_raw = (gp3_video[15:8] == 8'd0) ? 8'd10 : gp3_video[15:8];
 wire [7:0] object_half_width = object_control_enable ? object_half_width_raw : 8'd10;
 wire [7:0] object_half_height = object_control_enable ? object_half_height_raw : 8'd10;
-wire [8:0] object_x1_sum = {1'b0, object_center_x} + {1'b0, object_half_width};
-wire [8:0] object_y1_sum = {2'b00, object_center_y} + {1'b0, object_half_height};
-wire [7:0] object_x0 = object_control_enable ?
-                       ((object_center_x > object_half_width) ? (object_center_x - object_half_width) : 8'd0) :
+wire [9:0] object_x1_sum = {1'b0, object_center_x} + {2'b00, object_half_width};
+wire [8:0] object_y1_sum = {1'b0, object_center_y} + {1'b0, object_half_height};
+wire [8:0] object_x0 = object_control_enable ?
+                       ((object_center_x > {1'b0, object_half_width}) ? (object_center_x - {1'b0, object_half_width}) : 9'd0) :
                        OBJ_X0;
-wire [7:0] object_x1 = object_control_enable ?
-                       ((object_x1_sum >= SIM_X_SIZE - 1) ? (SIM_X_SIZE - 1) : object_x1_sum[7:0]) :
+wire [8:0] object_x1 = object_control_enable ?
+                       ((object_x1_sum >= SIM_X_SIZE - 1) ? (SIM_X_SIZE - 1) : object_x1_sum[8:0]) :
                        OBJ_X1;
-wire [6:0] object_y0 = object_control_enable ?
-                       (({1'b0, object_center_y} > object_half_height) ? (object_center_y - object_half_height[6:0]) : 7'd0) :
+wire [7:0] object_y0 = object_control_enable ?
+                       ((object_center_y > object_half_height) ? (object_center_y - object_half_height) : 8'd0) :
                        OBJ_Y0;
-wire [6:0] object_y1 = object_control_enable ?
-                       ((object_y1_sum >= SIM_Y_SIZE - 1) ? (SIM_Y_SIZE - 1) : object_y1_sum[6:0]) :
+wire [7:0] object_y1 = object_control_enable ?
+                       ((object_y1_sum >= SIM_Y_SIZE - 1) ? (SIM_Y_SIZE - 1) : object_y1_sum[7:0]) :
                        OBJ_Y1;
 
 // Q8 impedance-derived coefficients (Z0 = 1.0, Z_obj = 1.5).
@@ -747,21 +710,21 @@ localparam [7:0] K_BG  = 8'd64;
 localparam [7:0] K_OBJ = 8'd64;
 
 function in_obj;
-    input [7:0] xx;
+    input [8:0] xx;
     input [7:0] yy;
     begin
         in_obj = (xx >= object_x0) && (xx <= object_x1) &&
-                 (yy >= {1'b0, object_y0}) && (yy <= {1'b0, object_y1});
+                 (yy >= object_y0) && (yy <= object_y1);
     end
 endfunction
 
 // Neighbour coordinates of the solved cell (mid_center), clamped at edges.
-wire [7:0] obj_x   = window_x;
-wire [7:0] obj_y   = {1'b0, window_y};
-wire [7:0] obj_xm1 = (window_x == 8'd0)              ? 8'd0                : (window_x - 8'd1);
-wire [7:0] obj_xp1 = (window_x >= (SIM_X_SIZE - 1))  ? (SIM_X_SIZE - 1)    : (window_x + 8'd1);
-wire [7:0] obj_ym1 = (window_y == 7'd0)              ? 8'd0                : ({1'b0, window_y} - 8'd1);
-wire [7:0] obj_yp1 = (window_y >= (SIM_Y_SIZE - 1))  ? (SIM_Y_SIZE - 1)    : ({1'b0, window_y} + 8'd1);
+wire [8:0] obj_x   = window_x;
+wire [7:0] obj_y   = window_y;
+wire [8:0] obj_xm1 = (window_x == 9'd0)              ? 9'd0                : (window_x - 9'd1);
+wire [8:0] obj_xp1 = (window_x >= (SIM_X_SIZE - 1))  ? (SIM_X_SIZE - 1)    : (window_x + 9'd1);
+wire [7:0] obj_ym1 = (window_y == 8'd0)              ? 8'd0                : (window_y - 8'd1);
+wire [7:0] obj_yp1 = (window_y >= (SIM_Y_SIZE - 1))  ? (SIM_Y_SIZE - 1)    : (window_y + 8'd1);
 
 wire [1:0] z_middle = in_obj(obj_x,   obj_y)   ? OBJ_Z : BG_Z;
 wire [1:0] z_top    = in_obj(obj_x,   obj_ym1) ? OBJ_Z : BG_Z;
@@ -834,12 +797,15 @@ end
 
 wire [8:0] damp_q8;
 wire valid_damp;
-boundary_damping_coeff damping_coeff(
+boundary_damping_coeff #(
+    .WIDTH(SIM_X_SIZE),
+    .HEIGHT(SIM_Y_SIZE)
+) damping_coeff(
     .clk(out_stream_aclk),
     .rstn(periph_resetn),
     .valid_in(window_valid),
-    .x({2'd0, window_x}),
-    .y({2'd0, window_y}),
+    .x({1'd0, window_x}),
+    .y({1'd0, window_y}),
     .valid_out(valid_damp),
     .damp_q8(damp_q8)
 );
@@ -847,6 +813,9 @@ boundary_damping_coeff damping_coeff(
 reg valid_apply_in;
 reg [8:0] damp_q8_apply;
 
+// stage 4 register keeps pressure aligned with its address at 2x2 stride
+// (at 4x4 stride stage 3 was sufficient; tokens now arrive every 2 cycles)
+reg signed [17:0] next_pixel_middle_s4;
 reg [31:0] destination_write_addr_s4;
 reg init_active_s4;
 reg startup_seed_active_s4;
@@ -860,6 +829,7 @@ always @(posedge out_stream_aclk) begin
         valid_apply_in <= 1'b0;
         damp_q8_apply <= 9'd256;
 
+        next_pixel_middle_s4 <= 18'sd0;
         destination_write_addr_s4 <= 32'd0;
         init_active_s4 <= 1'b0;
         startup_seed_active_s4 <= 1'b0;
@@ -876,6 +846,7 @@ always @(posedge out_stream_aclk) begin
         end
 
         if (valid_damp) begin
+            next_pixel_middle_s4 <= next_pixel_middle_s3;
             destination_write_addr_s4 <= destination_write_addr_s3;
             init_active_s4 <= init_active_s3;
             startup_seed_active_s4 <= startup_seed_active_s3;
@@ -903,7 +874,7 @@ apply_damping #(
     .clk(out_stream_aclk),
     .rstn(periph_resetn),
     .valid_in(valid_apply_in),
-    .p_raw(next_pixel_middle_s3),
+    .p_raw(next_pixel_middle_s4),
     .damp_q8(damp_q8_apply),
     .valid_out(pixel_calc_ready),
     .p_damped(next_pixel_middle_damped)
@@ -937,11 +908,9 @@ wire signed [15:0] next_pixel_with_impulse_s5 =
     center_drive_active_s5 ? sat_add_pressure_wide(next_pixel_middle_damped, source_gain_q6) :
     next_pixel_damped_clamped_s5;
 
-wire [31:0] init_destination_wrdata_s5 =
-    {{16{init_fill_value_s5[15]}}, init_fill_value_s5};
+wire [15:0] init_destination_wrdata_s5 = init_fill_value_s5;
 
-wire [31:0] destination_wrdata_s5 =
-    {{16{next_pixel_with_impulse_s5[15]}}, next_pixel_with_impulse_s5};
+wire [15:0] destination_wrdata_s5 = next_pixel_with_impulse_s5;
 
 wire write_cur_b = init_active_s5 ? pixel_calc_ready : (pixel_calc_ready & swap_memory_s5);
 wire write_prev_b = init_active_s5 ? pixel_calc_ready : (pixel_calc_ready & !swap_memory_s5);
@@ -958,18 +927,18 @@ assign prev_bram_b_addr =
 
 assign cur_bram_b_wrdata =
     init_active_s5 ? init_destination_wrdata_s5 :
-    (swap_memory_s5 ? destination_wrdata_s5 : 32'd0);
+    (swap_memory_s5 ? destination_wrdata_s5 : 16'd0);
 
 assign prev_bram_b_wrdata =
     init_active_s5 ? init_destination_wrdata_s5 :
-    (swap_memory_s5 ? 32'd0 : destination_wrdata_s5);
+    (swap_memory_s5 ? 16'd0 : destination_wrdata_s5);
 
-// 4'b0011 writes the lower two bytes, enough for signed 9-bit pressure.
+// 2'b11 writes both bytes of the 16-bit word.
 assign cur_bram_b_we =
-    write_cur_b ? 4'b0011 : 4'b0000;
+    write_cur_b ? 2'b11 : 2'b00;
 
 assign prev_bram_b_we =
-    write_prev_b ? 4'b0011 : 4'b0000;
+    write_prev_b ? 2'b11 : 2'b00;
 
 always @(posedge out_stream_aclk) begin
     if (!periph_resetn) begin
@@ -1009,9 +978,24 @@ assign wave_r = (cur_pixel_middle < 0) ? inv_vis : 8'hFF;
 assign wave_g = inv_vis;
 assign wave_b = (cur_pixel_middle > 0) ? inv_vis : 8'hFF;
 
-assign r = wave_r;
-assign g = wave_g;
-assign b = wave_b;
+// overlay markers: green crosshair at source, grey outline at object bounds
+wire [8:0] marker_dx = (x_val > source_sim_x_video) ? (x_val - source_sim_x_video)
+                                                    : (source_sim_x_video - x_val);
+wire [7:0] marker_dy = (y_val > source_sim_y_video) ? (y_val - source_sim_y_video)
+                                                    : (source_sim_y_video - y_val);
+wire source_marker = ((marker_dx == 9'd0) && (marker_dy <= 8'd4)) ||
+                     ((marker_dy == 8'd0) && (marker_dx <= 9'd4));
+
+wire object_on_x_edge = (x_val == object_x0) || (x_val == object_x1);
+wire object_on_y_edge = (y_val == object_y0) || (y_val == object_y1);
+wire object_in_x_span = (x_val >= object_x0) && (x_val <= object_x1);
+wire object_in_y_span = (y_val >= object_y0) && (y_val <= object_y1);
+wire object_outline = (object_on_x_edge && object_in_y_span) ||
+                      (object_on_y_edge && object_in_x_span);
+
+assign r = source_marker ? 8'd0   : (object_outline ? 8'd96 : wave_r);
+assign g = source_marker ? 8'd200 : (object_outline ? 8'd96 : wave_g);
+assign b = source_marker ? 8'd0   : (object_outline ? 8'd96 : wave_b);
 
 assign ready = out_stream_tready;
 assign out_stream_tdata = {8'd0, b, g, r};
