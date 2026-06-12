@@ -17,3 +17,7 @@ overlay/ip/pixel_generator_1.0/tb/stream
 overlay/ip/pixel_generator_1.0/tb/test.vcd
 .mplconfig/fontlist-v390.json
 ui/__pycache__/test.cpython-314.pyc
+tb/obj_dir/
+tb/*.vcd
+tb/damping_lut_q8.mem
+tb/test_out/
