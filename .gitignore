@@ -15,3 +15,5 @@ overlay/NA/
 overlay/ip/hls/vitis_hls.log
 overlay/ip/pixel_generator_1.0/tb/stream
 overlay/ip/pixel_generator_1.0/tb/test.vcd
+.mplconfig/fontlist-v390.json
+ui/__pycache__/test.cpython-314.pyc
