@@ -15,15 +15,11 @@ frequency = [0.01]
 CYCLES = 1
 pulse_duration = [int(CYCLES / frequency[0])]
 
-# object
-shapes = ["circle", "square", "ellipse"]
-
-# initialisation
-source_position = [80, 120]
-object_position = [200, 120]
-
-object_radius = [20]
-object_shape = [0]
+# object is always an axis-aligned rectangle
+source_position    = [80, 120]
+object_position    = [200, 120]
+object_half_width  = [10]
+object_half_height = [10]
 
 gain = [0.8]
 pulse_fired_time = [None]
@@ -41,18 +37,11 @@ for i in range(BORDER):
     damping[:, WIDTH - 1 - i] = np.minimum(damping[:, WIDTH - 1 - i], v)
 
 
-def make_object_mask(centre_x, centre_y, radius, shape):
-    if shape == "circle":
-        return ((xx - centre_x) ** 2 + (yy - centre_y) ** 2) <= radius**2
-    elif shape == "square":
-        return (np.abs(xx - centre_x) <= radius) & (np.abs(yy - centre_y) <= radius)
-    elif shape == "ellipse":
-        return (
-            ((xx - centre_x) ** 2 / radius**2)
-            + ((yy - centre_y) ** 2 / (radius * 0.5) ** 2)
-        ) <= 1.0
-
-    raise ValueError(f"unknown shape: {shape}")
+def make_object_mask(centre_x, centre_y, hw, hh):
+    # axis-aligned rectangle
+    x0 = max(centre_x - hw, 0);  x1 = min(centre_x + hw, WIDTH - 1)
+    y0 = max(centre_y - hh, 0);  y1 = min(centre_y + hh, HEIGHT - 1)
+    return (xx >= x0) & (xx <= x1) & (yy >= y0) & (yy <= y1)
 
 
 source_stencil = np.array(
@@ -95,7 +84,7 @@ def simulation_step(previous_wave, current_wave, object_mask, timestep):
     next_wave = np.empty_like(current_wave)
     centre = current_wave[1:-1, 1:-1]
 
-    # Same rigid boundary calculation as sonar_simulation_v1.py.
+    # rigid boundary calculation 
     up = np.where(object_mask[:-2, 1:-1], centre, current_wave[:-2, 1:-1])
     down = np.where(object_mask[2:, 1:-1], centre, current_wave[2:, 1:-1])
     left = np.where(object_mask[1:-1, :-2], centre, current_wave[1:-1, :-2])
@@ -135,8 +124,8 @@ def run_benchmark(warmup_steps=0, measured_steps=5000, fire_step=0):
     object_mask = make_object_mask(
         object_position[0],
         object_position[1],
-        object_radius[0],
-        shapes[object_shape[0]],
+        object_half_width[0],
+        object_half_height[0],
     )
 
     reset_benchmark_state()
@@ -210,7 +199,7 @@ def print_results(
     print(f"  grid                     : {WIDTH} x {HEIGHT}")
     print(f"  measured steps           : {measured_steps:,} (+{warmup_steps:,} warmup)")
     print(f"  fluid cells updated      : {fluid_cells:,} of {interior_cells:,}")
-    print(f"  object                   : {shapes[object_shape[0]]}, radius {object_radius[0]}px")
+    print(f"  object                   : rectangle {object_half_width[0]*2}x{object_half_height[0]*2} px")
     print(f"  source position          : {tuple(source_position)}")
     print(f"  frequency / gain         : {frequency[0]:.4f} / {gain[0]:.2f}")
     print(f"  pulse fired at timestep  : {fire_step:,}")
@@ -243,12 +232,12 @@ def parse_position(value):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="benchmark for sonar simulation"
+        description="benchmark for wave simulation"
     )
     parser.add_argument("--warmup", type=int, default=100, help="warmup timesteps")
     parser.add_argument("--steps", type=int, default=1000, help="measured timesteps")
-    parser.add_argument("--shape", choices=shapes, default="circle", help="object shape")
-    parser.add_argument("--radius", type=int, default=20, help="object radius in pixels")
+    parser.add_argument("--half-width",  type=int, default=10, help="object half-width in pixels")
+    parser.add_argument("--half-height", type=int, default=10, help="object half-height in pixels")
     parser.add_argument("--freq", type=float, default=0.01, help="source pulse frequency")
     parser.add_argument("--gain", type=float, default=0.8, help="source pulse gain")
     parser.add_argument("--fire-step", type=int, default=0, help="timestep to fire pulse")
@@ -261,8 +250,8 @@ def main():
     gain[0] = args.gain
     source_position[:] = args.source
     object_position[:] = args.object
-    object_radius[0] = args.radius
-    object_shape[0] = shapes.index(args.shape)
+    object_half_width[0]  = args.half_width
+    object_half_height[0] = args.half_height
 
     run_benchmark(
         warmup_steps=args.warmup,
