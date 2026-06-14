@@ -9,7 +9,7 @@ WIDTH, HEIGHT = 320, 240
 BORDER = 50
 
 # emission
-C = 0.4
+C = 0.5
 K = C * C
 frequency = [0.01]
 CYCLES = 1

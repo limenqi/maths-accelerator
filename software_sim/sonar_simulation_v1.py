@@ -10,7 +10,7 @@ WIDTH, HEIGHT = 320, 240
 BORDER = 50 
 
 # emission 
-C = 0.4 # wave speed in pixels per timestep
+C = 0.5 # wave speed in pixels per timestep
 K = C * C # propoagation coefficient
 frequency = [0.01] 
 CYCLES = 1 # 1 complete wave 
