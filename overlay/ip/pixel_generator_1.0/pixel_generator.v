@@ -230,13 +230,20 @@ wire first = (x == 0) & (y == 0);
 wire lastx = (x == X_SIZE - 1);
 wire lasty = (y == Y_SIZE - 1);
 wire ready;
+
+//true when BRAM pot B used for solver writeback, display has to wait
 wire port_b_write_active;
 reg port_b_write_active_d;
+//can start fetching from BRAM, this is 1 cycle after writeback
+// display_read_prime = 1 means:
+// we just finished a writeback stall, now spend one extra cycle reloading the display BRAM data before video resumes.
 wire display_read_prime = port_b_write_active_d & !port_b_write_active;
+//BRAM fetched data is valid for display, 2 cycles after writeback
 wire valid_int = !(port_b_write_active | port_b_write_active_d);
 
 wire sim_x_last = (x[0] == 1'b1);
 wire sim_y_last = (y[0] == 1'b1);
+
 wire start_pixel_calc = ready & valid_int & sim_x_last & sim_y_last;
 
 
@@ -264,6 +271,8 @@ end
 
 localparam PRESS_FRAC = 6;
 wire [7:0] r, g, b;
+
+
 wire signed [17:0] next_pixel_middle;
 wire signed [15:0] cur_pixel_middle;
 wire signed [15:0] solver_pixel_middle;
@@ -287,7 +296,26 @@ wire [31:0] destination_write_addr = {15'd0, addr_center[16:0]};
 wire [31:0] display_center_addr = {15'd0, addr_center[16:0]};
 
 // First 2 frames are init frames used to clear/fill memory.
-wire init_active = (frame_counter < 8'd2);
+// Holding gp0[1] high reuses the same init write path as a software clear.
+wire init_active = (frame_counter < 8'd2) | gp0_video[1];
+
+// gp0: source fire/control
+//      bits  0     source fire
+//      bits  1     hold simulation clear active
+// gp1: source position
+//      bits  9:0   source X
+//      bits 18:10  source Y
+// gp2: object position/control
+//      bits 31     object control enable
+//      bits  9:0   object center X
+//      bits 18:10  object center Y
+// gp3: object size
+//     bits  7:0   object half-width
+//     bits 15:8   object half-height
+// gp4: source gain
+// gp5: source duration
+// gp6: unused
+// gp7: unused
 
 reg [31:0] gp0_video_meta;
 reg [31:0] gp0_video;
@@ -312,7 +340,9 @@ wire [7:0] source_sim_y_video = source_y_video[8:1];
 wire signed [8:0] source_gain_video = gp4_video[8:0];
 // Gain register is in display units; convert to Q6 state units.
 wire signed [15:0] source_gain_q6 = {{7{source_gain_video[8]}}, source_gain_video} <<< PRESS_FRAC;
+// use either value or 0 
 wire [7:0] source_duration_video = (gp5_video[15:8] == 8'd0) ? 8'd1 : gp5_video[15:8];
+// fires only when fire bit transitions from 0 to 1.
 wire gp0_fire_now = gp0_video[0] & ~gp0_fire_prev;
 wire signed [15:0] startup_seed_value = 16'sd0;
 
@@ -355,15 +385,53 @@ always @(posedge out_stream_aclk) begin
         end
         else if (start_pixel_calc & lastx & lasty & source_active) begin
             if (source_frames_left <= 8'd1) begin
+                //turn source off on last frame
                 source_active <= 1'b0;
                 source_frames_left <= 8'd0;
             end
             else begin
+                // normal countdown
                 source_frames_left <= source_frames_left - 8'd1;
             end
         end
     end
 end
+
+// #region S0: simulation BRAM reads and capture request metadata
+
+// Pipeline metadata naming:
+//
+// The pressure sample takes several cycles to move from BRAM read to final
+// writeback. Every control value that identifies that sample must move with it.
+// The names change at each stage to show which data they are aligned with.
+//
+// Direct signal mapping:
+//
+//   S0 live request        S1 / BRAM return          S2 / calculation window       S3/S4/S5
+//   ---------------        ----------------          -------------------       --------
+//   start_pixel_calc  ->   bram_sample_valid   ->    window_valid          ->  valid_damp / valid_apply_in / pixel_calc_ready
+//   x_val             ->   bram_x              ->    window_x = bram_x - 1
+//   y_val             ->   bram_y              ->    window_y = bram_y
+//   col_ptr           ->   bram_col            ->    row-buffer index used in S2
+//   destination_write_addr -> bram_destination_write_addr -> window_destination_write_addr -> destination_write_addr_s3------s5
+//   init_active       ->   bram_init_active
+//                       -> window_init_active
+//                       -> init_active_s3 -> init_active_s4 -> init_active_s5
+//   startup_seed_value ->  bram_startup_seed_value
+//                       -> window_startup_seed_value
+//                       -> startup_seed_value_s3 -> startup_seed_value_s4 -> startup_seed_value_s5
+//   source-active-at-this-cell
+//                       -> window_source_drive_active
+//                       -> source_drive_active_s3 -> source_drive_active_s4 -> source_drive_active_s5
+//   swap_memory       ->   bram_swap_memory
+//                       -> window_swap_memory
+//                       -> swap_memory_s3 -> swap_memory_s4 -> swap_memory_s5
+//
+// The x-coordinate is special: bram_x is the newest sample read from BRAM, but
+// that sample completes the right side of the stencil for the previous column,
+// so the solved cell is normally window_x = bram_x - 1. Writeback must use the
+// delayed swap_memory_s5 copy, not the live frame-level swap_memory, or a sample
+// near a frame boundary could be written to the wrong ping-pong BRAM.
 
 // Stage 2 updates this pointer; Stage 0 captures it for the BRAM request.
 reg [8:0] col_ptr;
@@ -428,8 +496,10 @@ assign prev_bram_a_en = start_pixel_calc;
 // swap_memory determines which BRAM is read from and which is written to, swapping the roles of current and previous buffers each frame.
 assign cur_bram_a_addr = swap_memory ? previous_center_addr : current_bottom_row_addr;
 assign prev_bram_a_addr = swap_memory ? current_bottom_row_addr : previous_center_addr;
+// #endregion
 
 
+// #region S1: capture BRAM return data and align request metadata
 wire signed [15:0] bram_current_bottom_sample =
     bram_init_active ? 16'sd0 :
     (bram_swap_memory ? prev_bram_a_rddata : cur_bram_a_rddata);
@@ -444,7 +514,7 @@ reg [7:0] window_y;
 reg [31:0] window_destination_write_addr;
 reg window_init_active;
 reg window_startup_seed_active;
-reg window_center_drive_active;
+reg window_source_drive_active;
 reg signed [15:0] window_init_fill_value;
 reg signed [15:0] window_startup_seed_value;
 reg window_swap_memory;
@@ -457,22 +527,24 @@ always @(posedge out_stream_aclk) begin
         window_destination_write_addr <= 32'd0;
         window_init_active <= 1'b0;
         window_startup_seed_active <= 1'b0;
-        window_center_drive_active <= 1'b0;
+        window_source_drive_active <= 1'b0;
         window_init_fill_value <= 16'sd0;
         window_startup_seed_value <= 16'sd0;
         window_swap_memory <= 1'b0;
     end
     else begin
+        // valid when BRAM sample is valid, and not first column, since 3x3 window. 
         window_valid <= bram_sample_valid & (bram_x != 9'd0);
 
         if (bram_sample_valid) begin
+            //note window_x is bram_x -1, since window is 3x3, pre-fetch pixel to the right of the current window, so the center of the window is one pixel to the left of bram_x.
             window_x <= (bram_x == 9'd0) ? 9'd0 : (bram_x - 9'd1);
             window_y <= bram_y;
             window_destination_write_addr <= (bram_x == 9'd0) ? bram_destination_write_addr :
                                              (bram_destination_write_addr - 32'd1);
             window_init_active <= bram_init_active;
             window_startup_seed_active <= 1'b0;
-            window_center_drive_active <= source_active &&
+            window_source_drive_active <= source_active &&
                                           (bram_x == (source_sim_x_video + 9'd1)) &&
                                           (bram_y == source_sim_y_video);
             window_init_fill_value <= 16'sd0;
@@ -481,7 +553,9 @@ always @(posedge out_stream_aclk) begin
         end
     end
 end
+// #endregion
 
+// #region S2: update row buffers and form the 5-point stencil window
 reg signed [15:0] row_y[0:SIM_X_SIZE-1];
 reg signed [15:0] row_y_plus_1[0:SIM_X_SIZE-1];
 reg signed [15:0] top_center;
@@ -636,7 +710,7 @@ always @(posedge out_stream_aclk) begin
         else
             col_ptr <= col_ptr + 1;
     end
-
+    // display path, fetch the pixel to render from the correct BRAM based on the swap_memory flag.
     if (periph_resetn && ready & valid_int) begin
         render_pixel_middle <= init_active ? 16'sd0 :
                                (swap_memory ? prev_bram_b_rddata : cur_bram_b_rddata);
@@ -649,6 +723,7 @@ assign cur_pixel_left    = mid_left;
 assign cur_pixel_right   = mid_right;
 assign solver_pixel_middle = mid_center;
 assign cur_pixel_middle  = render_pixel_middle;
+// #endregion
 
 // Object integration
 // Rectangular obstacle with acoustic impedance mismatch (Z0=1.0, Z_obj=1.5).
@@ -761,11 +836,12 @@ object_laplacian laplacian(
     .next_pixel_middle(next_pixel_middle)
 );
 
+// #region S3: capture laplacian result and matching sideband metadata
 reg signed [17:0] next_pixel_middle_s3;
 reg [31:0] destination_write_addr_s3;
 reg init_active_s3;
 reg startup_seed_active_s3;
-reg center_drive_active_s3;
+reg source_drive_active_s3;
 reg signed [15:0] init_fill_value_s3;
 reg signed [15:0] startup_seed_value_s3;
 reg swap_memory_s3;
@@ -776,7 +852,7 @@ always @(posedge out_stream_aclk) begin
         destination_write_addr_s3 <= 32'd0;
         init_active_s3 <= 1'b0;
         startup_seed_active_s3 <= 1'b0;
-        center_drive_active_s3 <= 1'b0;
+        source_drive_active_s3 <= 1'b0;
         init_fill_value_s3 <= 16'sd0;
         startup_seed_value_s3 <= 16'sd0;
         swap_memory_s3 <= 1'b0;
@@ -787,14 +863,16 @@ always @(posedge out_stream_aclk) begin
             destination_write_addr_s3 <= window_destination_write_addr;
             init_active_s3 <= window_init_active;
             startup_seed_active_s3 <= window_startup_seed_active;
-            center_drive_active_s3 <= window_center_drive_active;
+            source_drive_active_s3 <= window_source_drive_active;
             init_fill_value_s3 <= window_init_fill_value;
             startup_seed_value_s3 <= window_startup_seed_value;
             swap_memory_s3 <= window_swap_memory;
         end
     end
 end
+// #endregion
 
+// #region S4: compute damping coefficient and keep pressure/address aligned
 wire [8:0] damp_q8;
 wire valid_damp;
 boundary_damping_coeff #(
@@ -819,7 +897,7 @@ reg signed [17:0] next_pixel_middle_s4;
 reg [31:0] destination_write_addr_s4;
 reg init_active_s4;
 reg startup_seed_active_s4;
-reg center_drive_active_s4;
+reg source_drive_active_s4;
 reg signed [15:0] init_fill_value_s4;
 reg signed [15:0] startup_seed_value_s4;
 reg swap_memory_s4;
@@ -833,7 +911,7 @@ always @(posedge out_stream_aclk) begin
         destination_write_addr_s4 <= 32'd0;
         init_active_s4 <= 1'b0;
         startup_seed_active_s4 <= 1'b0;
-        center_drive_active_s4 <= 1'b0;
+        source_drive_active_s4 <= 1'b0;
         init_fill_value_s4 <= 16'sd0;
         startup_seed_value_s4 <= 16'sd0;
         swap_memory_s4 <= 1'b0;
@@ -850,20 +928,22 @@ always @(posedge out_stream_aclk) begin
             destination_write_addr_s4 <= destination_write_addr_s3;
             init_active_s4 <= init_active_s3;
             startup_seed_active_s4 <= startup_seed_active_s3;
-            center_drive_active_s4 <= center_drive_active_s3;
+            source_drive_active_s4 <= source_drive_active_s3;
             init_fill_value_s4 <= init_fill_value_s3;
             startup_seed_value_s4 <= startup_seed_value_s3;
             swap_memory_s4 <= swap_memory_s3;
         end
     end
 end
+// #endregion
 
+// #region S5: apply damping, inject source, and write back inactive BRAM
 wire pixel_calc_ready;
 wire signed [17:0] next_pixel_middle_damped;
 reg [31:0] destination_write_addr_s5;
 reg init_active_s5;
 reg startup_seed_active_s5;
-reg center_drive_active_s5;
+reg source_drive_active_s5;
 reg signed [15:0] init_fill_value_s5;
 reg signed [15:0] startup_seed_value_s5;
 reg swap_memory_s5;
@@ -885,7 +965,7 @@ always @(posedge out_stream_aclk) begin
         destination_write_addr_s5 <= 32'd0;
         init_active_s5 <= 1'b0;
         startup_seed_active_s5 <= 1'b0;
-        center_drive_active_s5 <= 1'b0;
+        source_drive_active_s5 <= 1'b0;
         init_fill_value_s5 <= 16'sd0;
         startup_seed_value_s5 <= 16'sd0;
         swap_memory_s5 <= 1'b0;
@@ -894,7 +974,7 @@ always @(posedge out_stream_aclk) begin
         destination_write_addr_s5 <= destination_write_addr_s4;
         init_active_s5 <= init_active_s4;
         startup_seed_active_s5 <= startup_seed_active_s4;
-        center_drive_active_s5 <= center_drive_active_s4;
+        source_drive_active_s5 <= source_drive_active_s4;
         init_fill_value_s5 <= init_fill_value_s4;
         startup_seed_value_s5 <= startup_seed_value_s4;
         swap_memory_s5 <= swap_memory_s4;
@@ -905,13 +985,14 @@ wire signed [15:0] next_pixel_damped_clamped_s5 = clamp_pressure_q6(next_pixel_m
 
 wire signed [15:0] next_pixel_with_impulse_s5 =
     startup_seed_active_s5 ? startup_seed_value_s5 :
-    center_drive_active_s5 ? sat_add_pressure_wide(next_pixel_middle_damped, source_gain_q6) :
+    source_drive_active_s5 ? sat_add_pressure_wide(next_pixel_middle_damped, source_gain_q6) :
     next_pixel_damped_clamped_s5;
 
 wire [15:0] init_destination_wrdata_s5 = init_fill_value_s5;
 
 wire [15:0] destination_wrdata_s5 = next_pixel_with_impulse_s5;
 
+// write to the correct bram. If init, write to both. If not init, write to inactive bram.
 wire write_cur_b = init_active_s5 ? pixel_calc_ready : (pixel_calc_ready & swap_memory_s5);
 wire write_prev_b = init_active_s5 ? pixel_calc_ready : (pixel_calc_ready & !swap_memory_s5);
 assign port_b_write_active = write_cur_b | write_prev_b;
@@ -939,6 +1020,7 @@ assign cur_bram_b_we =
 
 assign prev_bram_b_we =
     write_prev_b ? 2'b11 : 2'b00;
+// #endregion
 
 always @(posedge out_stream_aclk) begin
     if (!periph_resetn) begin
@@ -964,6 +1046,7 @@ end
 
 wire [15:0] mag;
 wire [11:0] mag_scaled;
+// add explanation
 wire [7:0] vis;
 wire [7:0] inv_vis;
 wire [7:0] wave_r;
@@ -973,6 +1056,8 @@ wire [7:0] wave_b;
 assign mag = (cur_pixel_middle > 0) ? cur_pixel_middle : -cur_pixel_middle;
 assign mag_scaled = mag[15:4];
 assign vis = (mag_scaled > 12'd255) ? 8'hFF : mag_scaled[7:0];
+
+// add explanation
 assign inv_vis = 8'hFF - vis;
 assign wave_r = (cur_pixel_middle < 0) ? inv_vis : 8'hFF;
 assign wave_g = inv_vis;
