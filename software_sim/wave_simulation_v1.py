@@ -101,7 +101,7 @@ source_stencil /= source_stencil.sum() # normalisation to keep the total energy 
 # display
 # create the window
 fig = plt.figure(figsize=(15, 6.5), facecolor='#0a0f1e')
-fig.canvas.manager.set_window_title('Sonar Simulation — Pulsed Sonar Renderer')
+fig.canvas.manager.set_window_title('Wave Simulation — Pulsed Wave Renderer')
 
 # split the window into panels 
 split_screen = gridspec.GridSpec(2, 2, width_ratios=[2.2, 1], hspace=0.4, wspace=0.3)
