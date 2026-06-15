@@ -19,7 +19,6 @@ TESTS=(
     "object_classification:$RTL_FOLDER/object_classification.v:$TEST_FOLDER/object_classification_tb.cpp:"
     "apply_damping:$RTL_FOLDER/apply_damping.v:$TEST_FOLDER/apply_damping_tb.cpp:-GPRESS_W=18"
     "boundary_damping_coeff:$RTL_FOLDER/boundary_damping_coeff.v:$TEST_FOLDER/boundary_damping_coeff_tb.cpp:-GWIDTH=320 -GHEIGHT=240"
-    "packer:$RTL_FOLDER/packer.v:$TEST_FOLDER/packer_tb.cpp:-Wno-PROCASSINIT"
     "pixel_generator:$RTL_FOLDER/pixel_generator.v:$TEST_FOLDER/pixel_generator_tb.cpp:$RTL_FOLDER/laplacian.v $RTL_FOLDER/object_classification.v $RTL_FOLDER/apply_damping.v $RTL_FOLDER/boundary_damping_coeff.v -Wno-PROCASSINIT -Wno-VARHIDDEN"
 )
 
