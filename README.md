@@ -19,7 +19,7 @@ This project models a two-dimensional pressure wave on a `320 x 240` solver grid
 | `overlay/ip/pixel_generator_1.0/` | Main FPGA IP. Contains `pixel_generator.v`, Laplacian/object/damping modules, and lookup-table files. |
 | `overlay/` | Vivado overlay scripts and base design files. |
 | `demo/` | Final PYNQ overlay files: `finalv17.bit` and `finalv17.hwh`. |
-| `wave_simulator_ui.ipynb` | Notebook/user interface for running the hardware demo on the PYNQ-Z1. |
+| `wave_simulator_ui_v2.ipynb` | Notebook/user interface for running the hardware demo on the PYNQ-Z1. |
 | `software_sim/` | Python software reference wave simulations. |
 | `tb/` | Verilator and GoogleTest-based RTL unit/integration tests. |
 | `benchmark/` | CPU solver, renderer, and full-frame benchmark programs. |
@@ -40,15 +40,18 @@ The final design targets the PYNQ-Z1's Zynq-7020 device (`xc7z020clg400-1`).
 
 ## Running the Demo on PYNQ-Z1
 
-Copy the final overlay files and notebook to the PYNQ board:
-
-```text
+1. Upload the files to the PYNQ board.
+   
 demo/finalv17.bit
 demo/finalv17.hwh
-wave_simulator_ui.ipynb
-```
+wave_simulator_ui_v2.ipynb
 
-Open the notebook from the PYNQ Jupyter environment and run it to load the overlay and start the UI.
+2. Open wave_simulator_ui_v2.ipynb in Jupyter  browser.
+3. Update BIT_PATH in cell 0
+4. In the address bar, change 'notebooks' to 'voila/render'.
+
+http://<board-ip>:9090/notebooks/path/to/wave_simulator_ui_v2.ipynb
+http://<board-ip>:9090/voila/render/path/to/wave_simulator_ui_v2.ipynb
 
 Runtime controls include:
 
@@ -131,6 +134,6 @@ This repository contains both final project files and development artefacts. The
 
 - Hardware RTL: `overlay/ip/pixel_generator_1.0/pixel_generator.v`
 - Final overlay: `demo/finalv17.bit`, `demo/finalv17.hwh`
-- UI notebook: `wave_simulator_ui.ipynb`
+- UI notebook: `wave_simulator_ui_v2.ipynb`
 - RTL tests: `tb/doit.sh`
 - Software reference: `software_sim/wave_simulation_pix.py`
